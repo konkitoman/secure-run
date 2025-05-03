@@ -44,6 +44,7 @@ pub fn main() !void {
 
     var allow_all = false;
     var save = false;
+    var interactive = false;
 
     var args = std.process.args();
     while (args.next()) |arg| {
@@ -62,6 +63,7 @@ pub fn main() !void {
             for (arg[1..]) |ch| switch (ch) {
                 'a' => allow_all = true,
                 's' => save = true,
+                'i' => interactive = true,
                 'h' => {
                     var stdio = std.io.getStdIn();
                     const w = stdio.writer();
@@ -87,6 +89,11 @@ pub fn main() !void {
 
     const exe_path = try std.fs.path.resolve(alloc, &.{ cwd_path, std.mem.sliceTo(process_args.items[0].?, 0) });
     defer alloc.free(exe_path);
+
+    if (c.access(@ptrCast(exe_path), c.F_OK) != 0) {
+        std.debug.print("secure-run: no such file: {s}\n", .{exe_path});
+        std.process.exit(1);
+    }
 
     var db = try DB.init(alloc);
     try db.add(.frx, exe_path);
@@ -181,7 +188,7 @@ pub fn main() !void {
     syscalls[58] = sys._allow; // vfork
     syscalls[59] = sys.execve;
     syscalls[62] = sys.kill;
-    syscalls[63] = sys.uname;
+    syscalls[63] = sys._allow; // uname
     syscalls[76] = sys.truncate;
     syscalls[77] = sys._allow; // ftruncate
     syscalls[79] = sys._allow; // getcwd
@@ -332,6 +339,7 @@ pub fn main() !void {
                         .alloc = alloc,
                         .db = &db,
                         .allow_all = allow_all,
+                        .interactive = interactive,
                     });
                     _ = linux.ptrace(C.PTRACE_SEIZE, pid, 0, 0, 0);
                     _ = linux.ptrace(C.PTRACE_SETOPTIONS, pid, 0, C.PTRACE_O_EXITKILL | C.PTRACE_O_TRACECLONE | C.PTRACE_O_TRACEFORK | C.PTRACE_O_TRACEVFORK | C.PTRACE_O_TRACESECCOMP, 0);

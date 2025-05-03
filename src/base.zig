@@ -26,6 +26,7 @@ pub const ContextPID = struct {
     unimplemented: bool = false,
     db: *DB,
     allow_all: bool,
+    interactive: bool,
 
     pub fn mem(self: *@This()) std.fs.File {
         if (self.file) |file| {
@@ -45,18 +46,15 @@ pub const ContextPID = struct {
         }
     }
 
-    pub fn read_filename(self: *@This(), from: usize) ![std.fs.max_path_bytes]u8 {
-        var buffer = std.mem.zeroes([std.fs.max_path_bytes]u8);
-        if (from == 0) {
-            return buffer;
-        }
+    pub fn read_filename(self: *@This(), from: usize) ![C.ARG_MAX]u8 {
+        var buffer = std.mem.zeroes([C.ARG_MAX]u8);
 
         const len = std.os.linux.process_vm_readv(self.pid, &.{.{
             .base = (&buffer).ptr,
             .len = buffer.len,
         }}, &.{.{
             .base = @ptrFromInt(from),
-            .len = std.fs.max_path_bytes,
+            .len = C.ARG_MAX,
         }}, 0);
 
         @memset(buffer[len..], 0);
@@ -136,6 +134,16 @@ pub const Perm = enum(u4) {
         if (int & 3 == C.O_RDWR) return .frw;
 
         return null;
+    }
+
+    pub fn format(self: @This(), fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
+        _ = fmt;
+        _ = options;
+
+        const e = @typeInfo(@This()).@"enum";
+        inline for (e.fields) |field| {
+            if (field.value == @intFromEnum(self)) return writer.print("{s}", .{field.name});
+        }
     }
 };
 
