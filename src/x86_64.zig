@@ -93,8 +93,21 @@ pub fn execve(cpid: *ContextPID, regs: *C.struct_user_regs_struct) !void {
 }
 
 pub fn kill(cpid: *ContextPID, regs: *C.struct_user_regs_struct) !void {
-    std.debug.print("{}: kill {}, {}\n", .{ cpid.pid, regs.rdi, regs.rsi });
-    cpid.unimplemented = true;
+    const pid: C.pid_t = @bitCast(@as(u32, @truncate(regs.rdi)));
+    debug.print("{}: kill {}, {}\n", .{ cpid.pid, pid, regs.rsi });
+    if (std.mem.indexOfAny(C.pid_t, cpid.pids.items, &.{pid})) |_| return;
+    if (cpid.allow_kill) return;
+
+    if (cpid.interactive) {
+        try std.io.getStdErr().writer().print("Allow to send kill {} to {} [y/N]: ", .{ regs.rsi, pid });
+        const input = try std.io.getStdIn().reader().readUntilDelimiterAlloc(cpid.alloc, '\n', std.math.maxInt(usize));
+        defer cpid.alloc.free(input);
+
+        if (std.mem.eql(u8, input, "y") or std.mem.eql(u8, input, "Y")) return;
+    }
+
+    regs.rax = std.math.maxInt(u64);
+    regs.orig_rax = std.math.maxInt(u64);
 }
 
 pub fn truncate(cpid: *ContextPID, regs: *C.struct_user_regs_struct) !void {

@@ -14,7 +14,7 @@ const Allocator = std.mem.Allocator;
 
 const sys = if (builtin.target.cpu.arch.isX86()) @import("x86_64.zig") else @panic("Not implemented for this platform!");
 
-pub fn run(path: [*:0]const u8, argv: [*:null]const ?[*:0]const u8, envp: [*:null]const ?[*:0]const u8) i32 {
+pub fn run(path: [*:0]const u8, argv: [*:null]const ?[*:0]const u8, envp: [*:null]const ?[*:0]const u8) C.pid_t {
     const r = c.fork();
 
     if (r == 0) {
@@ -25,7 +25,6 @@ pub fn run(path: [*:0]const u8, argv: [*:null]const ?[*:0]const u8, envp: [*:nul
         const res = C.seccomp_load(ctx);
         _ = res;
 
-        // _ = c.kill(C.getpid(), c.SIG.STOP);
         _ = c.execve(path, argv, envp);
         std.process.abort();
     }
@@ -45,6 +44,9 @@ pub fn main() !void {
     var allow_all = false;
     var save = false;
     var interactive = false;
+    var network = false;
+    var allow_unknown_syscalls = false;
+    var allow_kill = false;
 
     var args = std.process.args();
     while (args.next()) |arg| {
@@ -64,10 +66,19 @@ pub fn main() !void {
                 'a' => allow_all = true,
                 's' => save = true,
                 'i' => interactive = true,
+                'n' => network = true,
+                'u' => allow_unknown_syscalls = true,
+                'k' => allow_kill = true,
                 'h' => {
                     var stdio = std.io.getStdIn();
                     const w = stdio.writer();
                     try w.print("Showing the help:\n", .{});
+                    try w.print("-a Allow all\n", .{});
+                    try w.print("-s Save on exit, in permissions.zon in the current directory\n", .{});
+                    try w.print("-i Interactive mode, when a program tries to access a file and has not permissions will ask\n", .{});
+                    try w.print("-n Allow network syscalls, socket, bind, listen, accept\n", .{});
+                    try w.print("-u Allow unknown syscalls\n", .{});
+                    try w.print("-k Allow kill\n", .{});
                     std.process.exit(0);
                 },
                 else => {
@@ -84,6 +95,9 @@ pub fn main() !void {
 
     var cwd_path_buffer = std.mem.zeroes([std.fs.max_path_bytes]u8);
     const cwd_path = try std.fs.readLinkAbsolute("/proc/self/cwd", &cwd_path_buffer);
+
+    var pids = std.ArrayListUnmanaged(C.pid_t){};
+    defer pids.deinit(alloc);
 
     try process_args.append(alloc, null);
 
@@ -127,7 +141,7 @@ pub fn main() !void {
     }
 
     var syscalls: [457]*const fn (*ContextPID, *C.struct_user_regs_struct) anyerror!void = undefined;
-    @memset(&syscalls, sys._deny);
+    @memset(&syscalls, if (allow_unknown_syscalls) sys._allow else sys._deny);
 
     syscalls[0] = sys._allow; // read
     syscalls[1] = sys._allow; // write
@@ -168,16 +182,16 @@ pub fn main() !void {
     syscalls[38] = sys._allow; // setitimer
     syscalls[39] = sys._allow; // getpid
     syscalls[40] = sys._allow; // sendfile
-    syscalls[41] = sys._deny; // socket
-    syscalls[42] = sys._deny; // connect
-    syscalls[43] = sys._deny; // accept
+    syscalls[41] = if (network) sys._allow else sys._deny; // socket
+    syscalls[42] = if (network) sys._allow else sys._deny; // connect
+    syscalls[43] = if (network) sys._allow else sys._deny; // accept
     syscalls[44] = sys._allow; // sendto
     syscalls[45] = sys._allow; // recvfrom
     syscalls[46] = sys._allow; // sendmsg
     syscalls[47] = sys._allow; // recvmsg
     syscalls[48] = sys._allow; // shutdown
-    syscalls[49] = sys._deny; // bind
-    syscalls[50] = sys._deny; // listen
+    syscalls[49] = if (network) sys._allow else sys._deny; // bind
+    syscalls[50] = if (network) sys._allow else sys._deny; // listen
     syscalls[51] = sys._allow; // getsockname
     syscalls[52] = sys._allow; // getpeername
     syscalls[53] = sys._allow; // socketpair
@@ -215,7 +229,7 @@ pub fn main() !void {
     syscalls[166] = sys.umount;
     syscalls[167] = sys.swapon;
     syscalls[168] = sys.swapoff;
-    syscalls[186] = sys.swapoff;
+    syscalls[186] = sys._allow;
     syscalls[218] = sys._allow; // set_tid_address
     syscalls[234] = sys._allow; // tgkill
     syscalls[231] = sys._allow; // exit_group
@@ -268,6 +282,10 @@ pub fn main() !void {
                         cpid.file = null;
                     }
                 }
+
+                if (std.mem.indexOfAny(C.pid_t, pids.items, &.{pid})) |i| {
+                    _ = pids.swapRemove(i);
+                }
             },
             c.SIG.TRAP => {
                 switch (status.signo >> 16) {
@@ -294,7 +312,8 @@ pub fn main() !void {
                         if (sysn < syscalls.len) {
                             try syscalls[sysn](pctx, &regs);
                         } else {
-                            debug.print("SYSCALL to big {}\n", .{sysn});
+                            std.debug.print("run-secure: Unknown SYSCALL {}\n", .{sysn});
+                            if (!allow_unknown_syscalls) std.process.exit(1);
                         }
 
                         if (pctx.unimplemented) {
@@ -334,11 +353,14 @@ pub fn main() !void {
                 debug.print("{}: STOP\n", .{pid});
 
                 if (!context.contains(pid)) {
+                    try pids.append(alloc, pid);
                     try context.put(pid, ContextPID{
                         .pid = pid,
+                        .pids = &pids,
                         .alloc = alloc,
                         .db = &db,
                         .allow_all = allow_all,
+                        .allow_kill = allow_kill,
                         .interactive = interactive,
                     });
                     _ = linux.ptrace(C.PTRACE_SEIZE, pid, 0, 0, 0);

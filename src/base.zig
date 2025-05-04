@@ -22,10 +22,12 @@ pub const debug = struct {
 pub const ContextPID = struct {
     alloc: Allocator,
     pid: C.pid_t,
+    pids: *std.ArrayListUnmanaged(C.pid_t),
     file: ?std.fs.File = null,
     unimplemented: bool = false,
     db: *DB,
     allow_all: bool,
+    allow_kill: bool,
     interactive: bool,
 
     pub fn mem(self: *@This()) std.fs.File {
