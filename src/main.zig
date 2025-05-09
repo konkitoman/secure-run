@@ -127,7 +127,10 @@ pub fn main() !void {
         const data = try file.readToEndAlloc(alloc, std.math.maxInt(usize));
         var status = std.zon.parse.Status{};
         defer status.deinit(alloc);
-        const paths = try std.zon.parse.fromSlice([]const base.DB.Path, alloc, @ptrCast(data), &status, .{});
+        const paths = std.zon.parse.fromSlice([]const base.DB.Path, alloc, @ptrCast(data), &status, .{}) catch |err| {
+            std.debug.print("Error {}: {}\n", .{ err, status });
+            std.process.exit(1);
+        };
         debug.print("Status: {}\n", .{status});
 
         for (paths) |path| {
@@ -138,6 +141,17 @@ pub fn main() !void {
         alloc.free(data);
     } else |err| {
         debug.print("Cannot open: {s} {}\n", .{ file_path, err });
+    }
+
+    {
+        const paths = try db.getPaths();
+        defer db.freePaths(paths);
+
+        if (base.DEBUG) {
+            debug.print("Permissions: ", .{});
+            try std.zon.stringify.serialize(paths, .{}, std.io.getStdErr().writer());
+            debug.print("\n", .{});
+        }
     }
 
     var syscalls: [457]*const fn (*ContextPID, *C.struct_user_regs_struct) anyerror!void = undefined;
@@ -162,6 +176,8 @@ pub fn main() !void {
     syscalls[16] = sys._allow; // ioctl
     syscalls[17] = sys._allow; // pread64
     syscalls[18] = sys._allow; // pwrite64
+    syscalls[19] = sys._allow; // readv
+    syscalls[20] = sys._allow; // writev
     syscalls[21] = sys.access;
     syscalls[22] = sys._allow; // pipe
     syscalls[23] = sys._allow; // select
@@ -201,12 +217,27 @@ pub fn main() !void {
     syscalls[57] = sys._allow; // fork
     syscalls[58] = sys._allow; // vfork
     syscalls[59] = sys.execve;
+    syscalls[60] = sys._allow; // exit
+    syscalls[61] = sys._allow; // wait4
     syscalls[62] = sys.kill;
     syscalls[63] = sys._allow; // uname
+    syscalls[64] = sys._allow; // semget
+    syscalls[65] = sys._allow; // semop
+    syscalls[66] = sys._allow; // semctl
+    syscalls[67] = sys._allow; // semdt
+    syscalls[68] = sys._allow; // msgget
+    syscalls[69] = sys._allow; // msgsnd
+    syscalls[70] = sys._allow; // msgrcv
+    syscalls[71] = sys._allow; // msgctl
+    syscalls[72] = sys._allow; // fcntl
+    syscalls[73] = sys._allow; // flock
+    syscalls[74] = sys._allow; // fsync
+    syscalls[75] = sys._allow; // fdatasync
     syscalls[76] = sys.truncate;
     syscalls[77] = sys._allow; // ftruncate
     syscalls[79] = sys._allow; // getcwd
     syscalls[80] = sys.chdir;
+    syscalls[81] = sys._allow; // fchdir
     syscalls[82] = sys.rename;
     syscalls[83] = sys.mkdir;
     syscalls[84] = sys.rmdir;
@@ -216,24 +247,126 @@ pub fn main() !void {
     syscalls[88] = sys.symlink;
     syscalls[89] = sys.readlink;
     syscalls[90] = sys.chmod;
+    syscalls[91] = sys._allow; // fchmod
     syscalls[92] = sys.chown;
+    syscalls[93] = sys._allow; // fchown
     syscalls[94] = sys.lchown;
+    syscalls[95] = sys._allow; // umask
+    syscalls[96] = sys._allow; // gettimeofday
+    syscalls[97] = sys._allow; // getrlimit
+    syscalls[98] = sys._allow; // getrusage
+    syscalls[99] = sys._allow; // sysinfo
+    syscalls[100] = sys._allow; // times
     syscalls[101] = sys.ptrace;
+    syscalls[102] = sys._allow; // getuid
+    syscalls[103] = sys._allow; // syslog
+    syscalls[104] = sys._allow; // getgid
+    syscalls[105] = sys._allow; // setuid
+    syscalls[106] = sys._allow; // setgid
+    syscalls[107] = sys._allow; // geteuid
+    syscalls[108] = sys._allow; // getegid
+    syscalls[109] = sys._allow; // setpgid
+    syscalls[110] = sys._allow; // getppid
+    syscalls[111] = sys._allow; // getpgrp
+    syscalls[112] = sys._allow; // setsid
+    syscalls[113] = sys._allow; // setreuid
+    syscalls[114] = sys._allow; // setregid
+    syscalls[115] = sys._allow; // getgroups
+    syscalls[116] = sys._allow; // setgroups
+    syscalls[117] = sys._allow; // setresuid
+    syscalls[118] = sys._allow; // getresuid
+    syscalls[119] = sys._allow; // setresgid
+    syscalls[120] = sys._allow; // getresgid
+    syscalls[121] = sys._allow; // getpgid
+    syscalls[122] = sys._allow; // setfsuid
+    syscalls[123] = sys._allow; // setfsgid
+    syscalls[124] = sys._allow; // getsid
+    syscalls[125] = sys._allow; // capget
+    syscalls[126] = sys._allow; // capset
+    syscalls[127] = sys._allow; // rt_sigpending
+    syscalls[128] = sys._allow; // rt_sigtimedwait
+    syscalls[129] = sys._allow; // rt_sigqueueinfo
+    syscalls[130] = sys._allow; // rt_sigsuspend
+    syscalls[131] = sys._allow; // signalstack
     syscalls[132] = sys.utime;
     syscalls[133] = sys.mknod;
     syscalls[137] = sys.statfs;
+    syscalls[138] = sys._allow; // fstatfs
+    syscalls[139] = sys._allow; // sysfs
+    syscalls[140] = sys._allow; // getpriority
+    syscalls[141] = sys._allow; // setprioritykj
+    syscalls[142] = sys._allow; // sched_setparam
+    syscalls[143] = sys._allow; // sched_getparam
+    syscalls[144] = sys._allow; // sched_setscheduler
+    syscalls[145] = sys._allow; // sched_getscheduler
+    syscalls[146] = sys._allow; // sched_get_priority_max
+    syscalls[147] = sys._allow; // sched_get_priority_min
+    syscalls[148] = sys._allow; // sched_rr_get_interval
+    syscalls[149] = sys._allow; // mlock
+    syscalls[150] = sys._allow; // munlock
+    syscalls[151] = sys._allow; // mlockall
+    syscalls[152] = sys._allow; // munlockall
+    syscalls[153] = sys._allow; // vhangup
+    syscalls[154] = sys._allow; // modify_ldt
+    syscalls[155] = sys._allow; // pivot_root
+    syscalls[156] = sys._allow; // _sysctl
+    syscalls[157] = sys._allow; // prctl
     syscalls[158] = sys._allow; // arch_prctl
+    syscalls[159] = sys._allow; // adjtimeex
+    syscalls[160] = sys._allow; // setrlimit
     syscalls[161] = sys.chroot;
+    syscalls[162] = sys._allow; // sync
     syscalls[163] = sys.acct;
+    syscalls[164] = sys._allow; // settimeofday
     syscalls[165] = sys.mount;
     syscalls[166] = sys.umount;
     syscalls[167] = sys.swapon;
     syscalls[168] = sys.swapoff;
-    syscalls[186] = sys._allow;
+    syscalls[169] = sys._allow; // reboot
+    syscalls[170] = sys._allow; // sethostname
+    syscalls[171] = sys._allow; // setdomainname
+    syscalls[172] = sys._allow; // iopl
+    syscalls[173] = sys._allow; // ioperm
+    syscalls[175] = sys._allow; // init_module
+    syscalls[176] = sys._allow; // delete_module
+    syscalls[179] = sys._allow; // quotactl
+    syscalls[186] = sys._allow; // getid
+    syscalls[187] = sys._allow; // readahead
+    syscalls[200] = sys._allow; // tkill
+    syscalls[201] = sys._allow; // time
+    syscalls[202] = sys._allow; // futex
+    syscalls[203] = sys._allow; // sched_setaffinity
+    syscalls[204] = sys._allow; // sched_getaffinity
+    syscalls[206] = sys._allow; // io_setup
+    syscalls[207] = sys._allow; // io_destroy
+    syscalls[208] = sys._allow; // io_getevents
+    syscalls[209] = sys._allow; // io_submit
+    syscalls[210] = sys._allow; // io_cancel
+    syscalls[213] = sys._allow; // epoll_create
+    syscalls[216] = sys._allow; // remap_file_pages
+    syscalls[217] = sys._allow; // getdents64
     syscalls[218] = sys._allow; // set_tid_address
-    syscalls[234] = sys._allow; // tgkill
+    syscalls[219] = sys._allow; // restart_syscall
+    syscalls[220] = sys._allow; // semtimedop
+    syscalls[221] = sys._allow; // fadvise64
+    syscalls[222] = sys._allow; // timer_create
+    syscalls[223] = sys._allow; // timer_settime
+    syscalls[224] = sys._allow; // timer_gettime
+    syscalls[225] = sys._allow; // timer_getoverrun
+    syscalls[226] = sys._allow; // timer_delete
+    syscalls[227] = sys._allow; // clock_settime
+    syscalls[228] = sys._allow; // clock_gettime
+    syscalls[229] = sys._allow; // clock_getres
+    syscalls[230] = sys._allow; // clock_nanosleep
     syscalls[231] = sys._allow; // exit_group
+    syscalls[232] = sys._allow; // epoll_wait
+    syscalls[233] = sys._allow; // epoll_ctl
+    syscalls[234] = sys._allow; // tgkill
     syscalls[235] = sys.utimes;
+    syscalls[253] = sys._allow; // inotify_init
+    syscalls[254] = sys._allow; // inotify_add_watch
+    syscalls[255] = sys._allow; // inotify_rm_watch
+    syscalls[256] = sys._allow; // migrate_pages
     syscalls[257] = sys.openat;
     syscalls[258] = sys.mkdirat;
     syscalls[259] = sys.mknodat;
@@ -247,18 +380,48 @@ pub fn main() !void {
     syscalls[267] = sys.readlinkat;
     syscalls[268] = sys.fchmodat;
     syscalls[269] = sys.faccessat;
-    syscalls[293] = sys._allow; // pipe2
+    syscalls[270] = sys._allow; // pselect6
+    syscalls[271] = sys._allow; // ppoll
+    syscalls[272] = sys._allow; // unshare
     syscalls[273] = sys._allow; // set_robust_list
     syscalls[274] = sys._allow; // get_robust_list
+    syscalls[275] = sys._allow; // splice
+    syscalls[276] = sys._allow; // tee
+    syscalls[277] = sys._allow; // sync_file_range
+    syscalls[278] = sys._allow; // vmsplice
+    syscalls[279] = sys._allow; // move_pages
     syscalls[280] = sys.utimensat;
+    syscalls[281] = sys._allow; // epoll_pwait
+    syscalls[282] = sys._allow; // signalfd
+    syscalls[283] = sys._allow; // timerfd_create
+    syscalls[284] = sys._allow; // eventfd
+    syscalls[285] = sys._allow; // fallocate
+    syscalls[286] = sys._allow; // timerfd_settime
+    syscalls[287] = sys._allow; // timerfd_gettime
+    syscalls[288] = if (network) sys._allow else sys._deny; // accept4
+    syscalls[289] = sys._allow; // signalfd64
+    syscalls[290] = sys._allow; // eventfd2
+    syscalls[291] = sys._allow; // epoll_create1
+    syscalls[292] = sys._allow; // dup3
+    syscalls[293] = sys._allow; // pipe2
+    syscalls[294] = sys._allow; // inotify_init1
+    syscalls[295] = sys._allow; // preadv
+    syscalls[296] = sys._allow; // pwritev
+    syscalls[297] = sys._allow; // rt_tgsigqueueinfo
+    syscalls[298] = sys._allow; // pref_event_open
+    syscalls[299] = sys._allow; // recvmmsg
+    syscalls[300] = sys._allow; // fanotify_init
+    syscalls[301] = sys._allow; // fanotify_mark
     syscalls[302] = sys._allow; // prlimit64
     syscalls[316] = sys.renameat2;
     syscalls[310] = sys._allow; // process_vm_readv
     syscalls[311] = sys._allow; // process_vm_writev
     syscalls[318] = sys._allow; // get_random
+    syscalls[319] = sys._allow; // memfd_create
     syscalls[322] = sys.execveat;
     syscalls[332] = sys.statx;
     syscalls[334] = sys._allow; // rseq
+    syscalls[435] = sys._allow; // clone3
 
     var status: c.siginfo_t = undefined;
 

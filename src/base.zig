@@ -48,8 +48,8 @@ pub const ContextPID = struct {
         }
     }
 
-    pub fn read_filename(self: *@This(), from: usize) ![C.ARG_MAX]u8 {
-        var buffer = std.mem.zeroes([C.ARG_MAX]u8);
+    pub fn read_filename(self: *@This(), from: usize) ![C.PATH_MAX]u8 {
+        var buffer = std.mem.zeroes([C.PATH_MAX]u8);
 
         const len = std.os.linux.process_vm_readv(self.pid, &.{.{
             .base = (&buffer).ptr,
@@ -149,24 +149,25 @@ pub const Perm = enum(u4) {
     }
 };
 
-pub const Rule = struct {
-    perm: Perm,
-    paths: std.StringArrayHashMapUnmanaged(Rule),
+pub const Entry = struct {
+    perm: Perm = .none,
+    entries: std.StringArrayHashMapUnmanaged(Entry),
+    all: bool = false,
 };
 
 pub const DB = struct {
     alloc: Allocator,
-    root: std.StringArrayHashMapUnmanaged(Rule),
+    root: Entry,
 
     pub fn init(alloc: Allocator) !@This() {
-        return .{ .alloc = alloc, .root = try std.StringArrayHashMapUnmanaged(Rule).init(alloc, &.{}, &.{}) };
+        return .{ .alloc = alloc, .root = .{ .entries = try std.StringArrayHashMapUnmanaged(Entry).init(alloc, &.{}, &.{}) } };
     }
 
     pub fn deinit(self: *@This()) !void {
-        var stack = std.ArrayListUnmanaged(std.StringArrayHashMapUnmanaged(Rule)){};
+        var stack = std.ArrayListUnmanaged(Entry){};
         defer stack.deinit(self.alloc);
 
-        var to_deinit = std.ArrayListUnmanaged(std.StringArrayHashMapUnmanaged(Rule)){};
+        var to_deinit = std.ArrayListUnmanaged(Entry){};
         defer to_deinit.deinit(self.alloc);
 
         try stack.append(self.alloc, self.root);
@@ -175,17 +176,15 @@ pub const DB = struct {
             const a = stack.pop().?;
             try to_deinit.append(self.alloc, a);
 
-            for (a.keys()) |key| {
+            for (a.entries.keys()) |key| {
                 self.alloc.free(key);
             }
 
-            for (a.values()) |v| {
-                try stack.append(self.alloc, v.paths);
-            }
+            try stack.appendSlice(self.alloc, a.entries.values());
         }
 
         for (to_deinit.items) |*v| {
-            v.deinit(self.alloc);
+            v.entries.deinit(self.alloc);
         }
     }
 
@@ -196,26 +195,27 @@ pub const DB = struct {
         var d = data[1..];
 
         var entry = &self.root;
-        var ptr_value: ?*Rule = null;
 
         while (true) {
             const len = if (std.mem.indexOf(u8, d, "/")) |pos| pos else d.len;
 
             if (d.len != 0) {
-                if (!entry.contains(d[0..len])) {
-                    const key = try self.alloc.alloc(u8, len);
-                    @memcpy(key, d[0..len]);
-
-                    try entry.put(
-                        self.alloc,
-                        key,
-                        .{ .perm = .none, .paths = try std.StringArrayHashMapUnmanaged(Rule).init(self.alloc, &.{}, &.{}) },
-                    );
+                if (!entry.entries.contains(d[0..len])) {
+                    if (std.mem.eql(u8, d[0..len], "*")) {
+                        entry.all = true;
+                    } else {
+                        const key = try self.alloc.alloc(u8, len);
+                        @memcpy(key, d[0..len]);
+                        try entry.entries.put(
+                            self.alloc,
+                            key,
+                            .{ .perm = .none, .all = false, .entries = try std.StringArrayHashMapUnmanaged(Entry).init(self.alloc, &.{}, &.{}) },
+                        );
+                    }
                 }
 
-                if (entry.getPtr(d[0..len])) |value| {
-                    entry = &value.paths;
-                    ptr_value = value;
+                if (entry.entries.getPtr(d[0..len])) |value| {
+                    entry = value;
                 }
             }
 
@@ -226,9 +226,7 @@ pub const DB = struct {
             break;
         }
 
-        if (ptr_value) |value| {
-            value.perm = value.perm.update(perm);
-        }
+        entry.perm = entry.perm.update(perm);
     }
 
     pub fn access(self: @This(), path: []const u8) Perm {
@@ -241,22 +239,16 @@ pub const DB = struct {
 
         var entry = self.root;
 
-        var wild = false;
-
         while (d.len != 0) {
             const len = if (std.mem.indexOf(u8, d, "/")) |pos| pos else d.len;
+            const e = entry;
 
-            if (entry.getPtr(d[0..len])) |v| {
-                perm = v.perm;
-                entry = v.paths;
-            } else {
-                if (entry.get("*")) |v| {
-                    perm = v.perm;
-                    entry = v.paths;
-                    wild = true;
-                } else {
-                    if (!wild) return .none;
-                }
+            if (e.all) {
+                perm = e.perm;
+            }
+
+            if (e.entries.get(d[0..len])) |v| {
+                entry = v;
             }
 
             if (d.len > len) {
@@ -266,7 +258,11 @@ pub const DB = struct {
             break;
         }
 
-        return perm;
+        if (d.len == 0) {
+            return entry.perm;
+        } else {
+            return entry.perm.update(perm);
+        }
     }
 
     pub const Path = struct {
@@ -277,30 +273,42 @@ pub const DB = struct {
     pub fn getPaths(self: @This()) ![]const Path {
         var paths = std.ArrayListUnmanaged(Path){};
 
-        for (self.root.keys()) |key| {
-            var entries = std.ArrayListUnmanaged(struct {
-                path: std.ArrayListUnmanaged(u8),
-                entry: std.StringArrayHashMap(Rule).Entry,
-            }){};
-            defer entries.deinit(self.alloc);
+        const E = struct {
+            path: std.ArrayListUnmanaged(u8),
+            entry: Entry,
+        };
 
-            try entries.append(self.alloc, .{ .path = .{}, .entry = self.root.getEntry(key).? });
+        var entries = std.ArrayListUnmanaged(E){};
+        defer entries.deinit(self.alloc);
 
-            while (entries.items.len != 0) {
-                var e = entries.pop().?;
-                try e.path.append(self.alloc, '/');
-                try e.path.appendSlice(self.alloc, e.entry.key_ptr.*);
+        try entries.append(self.alloc, .{ .path = .{}, .entry = self.root });
+
+        while (entries.items.len != 0) {
+            const _entries = try self.alloc.alloc(E, entries.items.len);
+            defer self.alloc.free(_entries);
+            @memcpy(_entries, entries.items);
+            entries.clearRetainingCapacity();
+
+            for (_entries) |*e| {
                 defer e.path.deinit(self.alloc);
-
-                if (e.entry.value_ptr.perm != .none) {
-                    const path = try self.alloc.alloc(u8, e.path.items.len);
-                    @memcpy(path, e.path.items);
-                    try paths.append(self.alloc, .{ .path = path, .perm = e.entry.value_ptr.perm });
+                if (e.entry.all) {
+                    const _path = try self.alloc.alloc(u8, e.path.items.len + 2);
+                    @memcpy(_path[0..e.path.items.len], e.path.items);
+                    @memcpy(_path[e.path.items.len..], "/*");
+                    try paths.append(self.alloc, .{ .perm = e.entry.perm, .path = _path });
+                } else {
+                    if (e.entry.perm != .none) {
+                        const _path = try self.alloc.alloc(u8, e.path.items.len);
+                        @memcpy(_path, e.path.items);
+                        try paths.append(self.alloc, .{ .perm = e.entry.perm, .path = _path });
+                    }
                 }
 
-                for (e.entry.value_ptr.paths.keys()) |k| {
-                    const entry = e.entry.value_ptr.paths.getEntry(k).?;
-                    try entries.append(self.alloc, .{ .path = try e.path.clone(self.alloc), .entry = entry });
+                for (e.entry.entries.keys()) |key| {
+                    var path = try e.path.clone(self.alloc);
+                    try path.append(self.alloc, '/');
+                    try path.appendSlice(self.alloc, key);
+                    try entries.append(self.alloc, .{ .path = path, .entry = e.entry.entries.get(key).? });
                 }
             }
         }

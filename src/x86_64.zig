@@ -5,7 +5,6 @@ const debug = base.debug;
 const C = base.C;
 const ContextPID = base.ContextPID;
 const Perm = base.Perm;
-// const read_cstr = base.read_cstr;
 
 pub fn _deny(cpid: *ContextPID, regs: *C.struct_user_regs_struct) !void {
     _ = regs;
@@ -697,7 +696,10 @@ pub fn execveat(cpid: *ContextPID, regs: *C.struct_user_regs_struct) !void {
 }
 
 pub fn statx(cpid: *ContextPID, regs: *C.struct_user_regs_struct) !void {
-    const _filename = try cpid.read_filename(regs.rsi);
+    var _filename = std.mem.zeroes([C.PATH_MAX]u8);
+    if (regs.rsi != 0) {
+        _filename = try cpid.read_filename(regs.rsi);
+    }
     const filename = std.mem.sliceTo(&_filename, 0);
     debug.print("statx {}, {s}, {}, {}, {}\n", .{ regs.rdi, filename, regs.rdx, regs.r10, regs.r8 });
     const dfd_path_buffer = try cpid.read_dfd_path(@bitCast(@as(u32, @truncate(regs.rdi))));
@@ -711,7 +713,7 @@ pub fn statx(cpid: *ContextPID, regs: *C.struct_user_regs_struct) !void {
 
 fn file_interaction(cpid: *ContextPID, regs: *C.struct_user_regs_struct, perm: Perm, path: []const u8) !void {
     if (cpid.allow_all) {
-        try cpid.db.add(perm, path);
+        if (!cpid.db.access(path).contains(perm)) try cpid.db.add(perm, path);
         return;
     } else if (cpid.db.access(path).contains(perm)) {
         return;
