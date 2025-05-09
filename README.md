@@ -13,6 +13,8 @@ You can use `-s` to save the `permissions.zon` after all the processes ended.
 You can use `-u` to allow unknown syscalls.
 You can use `-i` for interactive mode when the process tries to access a file or kill a process.
 
+The program relative or absolute path needs to be after `--` the program will not be searched in the PATH
+
 # Permissions
 
 The `permissions.zon` will be used from the current directory in that the `secure-run` is runed.
