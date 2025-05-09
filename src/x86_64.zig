@@ -6,17 +6,6 @@ const C = base.C;
 const ContextPID = base.ContextPID;
 const Perm = base.Perm;
 
-pub fn _deny(cpid: *ContextPID, regs: *C.struct_user_regs_struct) !void {
-    _ = regs;
-
-    cpid.unimplemented = true;
-}
-
-pub fn _allow(cpid: *ContextPID, regs: *C.struct_user_regs_struct) !void {
-    _ = cpid;
-    _ = regs;
-}
-
 pub fn open(cpid: *ContextPID, regs: *C.struct_user_regs_struct) !void {
     const _filename = try cpid.read_filename(regs.rdi);
     const filename = std.mem.sliceTo(&_filename, 0);
@@ -444,6 +433,45 @@ pub fn swapoff(cpid: *ContextPID, regs: *C.struct_user_regs_struct) !void {
     try file_interaction(cpid, regs, .fw, path);
 }
 
+pub fn setxattr(cpid: *ContextPID, regs: *C.struct_user_regs_struct) !void {
+    const _filename = try cpid.read_filename(regs.rdi);
+    const filename = std.mem.sliceTo(&_filename, 0);
+    const dfd_path_buffer = try cpid.read_dfd_path(C.AT_FDCWD);
+    const dfd_path = std.mem.sliceTo(&dfd_path_buffer, 0);
+    const path = try std.fs.path.resolve(cpid.alloc, &.{ dfd_path, filename });
+    defer cpid.alloc.free(path);
+
+    try file_interaction(cpid, regs, .fw, path);
+}
+
+pub fn lsetxattr(cpid: *ContextPID, regs: *C.struct_user_regs_struct) !void {
+    return setxattr(cpid, regs);
+}
+
+pub fn getxattr(cpid: *ContextPID, regs: *C.struct_user_regs_struct) !void {
+    return setxattr(cpid, regs);
+}
+
+pub fn lgetxattr(cpid: *ContextPID, regs: *C.struct_user_regs_struct) !void {
+    return setxattr(cpid, regs);
+}
+
+pub fn listxattr(cpid: *ContextPID, regs: *C.struct_user_regs_struct) !void {
+    return setxattr(cpid, regs);
+}
+
+pub fn llistxattr(cpid: *ContextPID, regs: *C.struct_user_regs_struct) !void {
+    return setxattr(cpid, regs);
+}
+
+pub fn removexattr(cpid: *ContextPID, regs: *C.struct_user_regs_struct) !void {
+    return setxattr(cpid, regs);
+}
+
+pub fn lremovexattr(cpid: *ContextPID, regs: *C.struct_user_regs_struct) !void {
+    return setxattr(cpid, regs);
+}
+
 pub fn utimes(cpid: *ContextPID, regs: *C.struct_user_regs_struct) !void {
     const _filename = try cpid.read_filename(regs.rdi);
     const filename = std.mem.sliceTo(&_filename, 0);
@@ -709,6 +737,10 @@ pub fn statx(cpid: *ContextPID, regs: *C.struct_user_regs_struct) !void {
     defer cpid.alloc.free(path);
 
     try file_interaction(cpid, regs, .f, path);
+}
+
+pub fn faccessat2(cpid: *ContextPID, regs: *C.struct_user_regs_struct) !void {
+    return faccessat(cpid, regs);
 }
 
 fn file_interaction(cpid: *ContextPID, regs: *C.struct_user_regs_struct, perm: Perm, path: []const u8) !void {
