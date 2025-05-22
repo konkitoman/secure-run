@@ -266,8 +266,8 @@ pub const DB = struct {
     }
 
     pub const Path = struct {
-        perm: Perm,
-        path: []const u8,
+        Perm,
+        []const u8,
     };
 
     pub fn getPaths(self: @This()) ![]const Path {
@@ -295,12 +295,12 @@ pub const DB = struct {
                     const _path = try self.alloc.alloc(u8, e.path.items.len + 2);
                     @memcpy(_path[0..e.path.items.len], e.path.items);
                     @memcpy(_path[e.path.items.len..], "/*");
-                    try paths.append(self.alloc, .{ .perm = e.entry.perm, .path = _path });
+                    try paths.append(self.alloc, .{ e.entry.perm, _path });
                 } else {
                     if (e.entry.perm != .none) {
                         const _path = try self.alloc.alloc(u8, e.path.items.len);
                         @memcpy(_path, e.path.items);
-                        try paths.append(self.alloc, .{ .perm = e.entry.perm, .path = _path });
+                        try paths.append(self.alloc, .{ e.entry.perm, _path });
                     }
                 }
 
@@ -320,7 +320,7 @@ pub const DB = struct {
 
     pub fn freePaths(self: @This(), paths: []const Path) void {
         for (paths) |path| {
-            self.alloc.free(path.path);
+            self.alloc.free(path.@"1");
         }
         self.alloc.free(paths);
     }

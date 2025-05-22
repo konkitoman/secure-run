@@ -23,7 +23,7 @@ The `permissions.zon` will be used from the current directory in that the `secur
 
 permissions are laid out in a list.
 
-Every entry has a `perm` and `path` fields
+Every entry has a `perm` and `path` fields, the first is the `perm` and `path` is second.
 
 Falid `perm`
 - `none` not permission, secure-run will never save this permission with `-s`
@@ -53,7 +53,7 @@ This is with not permissions.
 This is that allows read access any file from `/etc`
 ```zon
 .{
-    .{ .perm = .fr, .path = "/etc/*" },
+    .{ .fr, "/etc/*" },
 }
 ```
 
@@ -61,12 +61,12 @@ This is the recommended `permissions.zon` for the most programs to work using in
 
 ```zon
 .{
-    .{ .perm = .fr, .path = "/lib/*" },
-    .{ .perm = .frx, .path = "/bin/*" },
-    .{ .perm = .fr, .path = "/usr/lib/*" },
-    .{ .perm = .frx, .path = "/usr/bin/*" },
-    .{ .perm = .fr, .path = "/etc/*" },
-    .{ .perm = .fr, .path = "/sys/*" },
-    .{ .perm = .fr, .path = "/var/*" },
+    .{ .fr, "/lib/*" },
+    .{ .frx, "/bin/*" },
+    .{ .fr, "/usr/lib/*" },
+    .{ .frx, "/usr/bin/*" },
+    .{ .fr, "/etc/*" },
+    .{ .fr, "/sys/*" },
+    .{ .fr, "/var/*" },
 }
 ```

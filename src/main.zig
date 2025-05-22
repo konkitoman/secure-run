@@ -147,7 +147,7 @@ pub fn main() !void {
         debug.print("Status: {}\n", .{status});
 
         for (paths) |path| {
-            try db.add(path.perm, path.path);
+            try db.add(path.@"0", path.@"1");
         }
 
         std.zon.parse.free(alloc, paths);
