@@ -19,36 +19,21 @@ pub const debug = struct {
     }
 };
 
-pub const ContextPID = struct {
-    alloc: Allocator,
-    pid: C.pid_t,
-    pids: *std.ArrayListUnmanaged(C.pid_t),
-    file: ?std.fs.File = null,
-    unimplemented: bool = false,
-    db: *DB,
+pub const Context = struct {
+    db: DB,
+    pctxs: std.AutoHashMap(C.__pid_t, ContextPID),
     allow_all: bool,
     allow_kill: bool,
     interactive: bool,
     stderr: *std.io.Writer,
     stdin: *std.io.Reader,
+};
 
-    pub fn mem(self: *@This()) std.fs.File {
-        if (self.file) |file| {
-            return file;
-        } else {
-            var buffer = std.ArrayListUnmanaged(u8){};
-            defer buffer.deinit(self.alloc);
-            std.fmt.format(buffer.writer(self.alloc), "/proc/{}/mem", .{self.pid}) catch |err| {
-                std.debug.panic("Cannot format: {}\n", .{err});
-            };
-            if (std.fs.openFileAbsolute(buffer.items, .{ .mode = .read_write })) |file| {
-                self.file = file;
-                return file;
-            } else |err| {
-                std.debug.panic("Cannot open mem file: {}\n", .{err});
-            }
-        }
-    }
+pub const ContextPID = struct {
+    context: *Context,
+    alloc: Allocator,
+    pid: C.pid_t,
+    unimplemented: bool = false,
 
     pub fn read_filename(self: *@This(), from: usize) ![C.PATH_MAX]u8 {
         var buffer = std.mem.zeroes([C.PATH_MAX]u8);

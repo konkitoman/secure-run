@@ -7,6 +7,7 @@ const base = @import("base.zig");
 const debug = base.debug;
 const C = base.C;
 const ContextPID = base.ContextPID;
+const Context = base.Context;
 const DB = base.DB;
 
 const Allocator = std.mem.Allocator;
@@ -118,9 +119,6 @@ pub fn main() !void {
     var cwd_path_buffer = std.mem.zeroes([std.fs.max_path_bytes]u8);
     const cwd_path = try std.fs.readLinkAbsolute("/proc/self/cwd", &cwd_path_buffer);
 
-    var pids = std.ArrayListUnmanaged(C.pid_t){};
-    defer pids.deinit(alloc);
-
     try process_args.append(alloc, null);
 
     const exe_path = try std.fs.path.resolve(alloc, &.{ cwd_path, std.mem.sliceTo(process_args.items[0].?, 0) });
@@ -131,15 +129,24 @@ pub fn main() !void {
         std.process.exit(1);
     }
 
-    var db = try DB.init(alloc);
-    try db.add(.frx, exe_path);
-    try db.add(.fr, "/usr/lib/libc.so.6");
+    var ctx = Context{
+        .db = try DB.init(alloc),
+        .pctxs = .init(alloc),
+        .allow_all = allow_all,
+        .interactive = interactive,
+        .allow_kill = allow_kill,
+
+        .stderr = stderr,
+        .stdin = stdin,
+    };
+    defer _ = ctx.db.deinit() catch {};
+    defer ctx.pctxs.deinit();
+
+    try ctx.db.add(.frx, exe_path);
+    try ctx.db.add(.fr, "/usr/lib/libc.so.6");
 
     var pid = run(@ptrCast(exe_path), @ptrCast(process_args.items), std.c.environ);
     debug.print("MAIN PID: {}\n", .{pid});
-
-    var context = std.AutoHashMap(C.__pid_t, ContextPID).init(alloc);
-    defer context.deinit();
 
     const file_path = "permissions.zon";
     debug.print("Opening: {s}\n", .{file_path});
@@ -155,7 +162,7 @@ pub fn main() !void {
         };
 
         for (paths) |path| {
-            try db.add(path.@"0", path.@"1");
+            try ctx.db.add(path.@"0", path.@"1");
         }
 
         std.zon.parse.free(alloc, paths);
@@ -165,8 +172,8 @@ pub fn main() !void {
     }
 
     {
-        const paths = try db.getPaths();
-        defer db.freePaths(paths);
+        const paths = try ctx.db.getPaths();
+        defer ctx.db.freePaths(paths);
 
         if (base.DEBUG) {
             debug.print("Permissions: ", .{});
@@ -519,8 +526,6 @@ pub fn main() !void {
     while (true) {
         var sig: i32 = 0;
         pid = c.waitpid(-1, @ptrCast(&status), 0);
-        // std.debug.print("PID: {}\n", .{pid});
-        // debug.print("Status: {}\n", .{status});
         if (pid == -1) {
             debug.print("Exited, No more children!\n", .{});
             break;
@@ -530,29 +535,19 @@ pub fn main() !void {
             0 => {
                 debug.print("{}: SUCCESS\n", .{pid});
                 _ = linux.ptrace(C.PTRACE_DETACH, pid, 0, 0, 0);
-                if (context.getPtr(pid)) |cpid| {
-                    if (cpid.file) |file| {
-                        file.close();
-                        cpid.file = null;
-                    }
-                }
 
-                if (std.mem.indexOfAny(C.pid_t, pids.items, &.{pid})) |i| {
-                    _ = pids.swapRemove(i);
+                if (ctx.pctxs.get(pid)) |pctx| {
+                    _ = pctx;
+                    _ = ctx.pctxs.remove(pid);
                 }
             },
             c.SIG.TRAP => {
                 switch (status.signo >> 16) {
                     0 => {
                         debug.print("PTRACE RESET\n", .{});
-                        const pctx = context.getPtr(pid).?;
-                        if (pctx.file) |file| {
-                            file.close();
-                            pctx.file = null;
-                        }
                     },
                     C.PTRACE_EVENT_SECCOMP => {
-                        const pctx = context.getPtr(pid).?;
+                        const pctx = ctx.pctxs.getPtr(pid).?;
 
                         var regs: C.struct_user_regs_struct = undefined;
 
@@ -606,18 +601,11 @@ pub fn main() !void {
             c.SIG.STOP => {
                 debug.print("{}: STOP\n", .{pid});
 
-                if (!context.contains(pid)) {
-                    try pids.append(alloc, pid);
-                    try context.put(pid, ContextPID{
+                if (!ctx.pctxs.contains(pid)) {
+                    try ctx.pctxs.put(pid, ContextPID{
+                        .context = &ctx,
                         .pid = pid,
-                        .pids = &pids,
                         .alloc = alloc,
-                        .db = &db,
-                        .allow_all = allow_all,
-                        .allow_kill = allow_kill,
-                        .interactive = interactive,
-                        .stderr = stderr,
-                        .stdin = stdin,
                     });
                     _ = linux.ptrace(C.PTRACE_SEIZE, pid, 0, 0, 0);
                     _ = linux.ptrace(C.PTRACE_SETOPTIONS, pid, 0, C.PTRACE_O_EXITKILL | C.PTRACE_O_TRACECLONE | C.PTRACE_O_TRACEFORK | C.PTRACE_O_TRACEVFORK | C.PTRACE_O_TRACESECCOMP, 0);
@@ -635,7 +623,7 @@ pub fn main() !void {
     }
 
     debug.print("Results:\n", .{});
-    const paths = try db.getPaths();
+    const paths = try ctx.db.getPaths();
     if (base.DEBUG) {
         try std.zon.stringify.serialize(paths, .{}, stderr);
     }
@@ -650,6 +638,5 @@ pub fn main() !void {
         debug.print("File {s} saved with all perms\n", .{file_path});
     }
 
-    db.freePaths(paths);
-    try db.deinit();
+    ctx.db.freePaths(paths);
 }
