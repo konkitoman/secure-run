@@ -29,6 +29,8 @@ pub const ContextPID = struct {
     allow_all: bool,
     allow_kill: bool,
     interactive: bool,
+    stderr: *std.io.Writer,
+    stdin: *std.io.Reader,
 
     pub fn mem(self: *@This()) std.fs.File {
         if (self.file) |file| {
@@ -65,14 +67,16 @@ pub const ContextPID = struct {
     }
 
     pub fn read_dfd_path(self: *@This(), dfd: c_int) ![std.fs.max_path_bytes]u8 {
-        var buffer = try std.BoundedArray(u8, std.fs.max_path_bytes).init(0);
+        var buff: [std.fs.max_path_bytes]u8 = undefined;
+        var buffer = std.io.Writer.fixed(&buff);
+
         var output: [std.fs.max_path_bytes]u8 = undefined;
         if (dfd == C.AT_FDCWD) {
-            try buffer.writer().print("/proc/{}/cwd", .{self.pid});
+            try buffer.print("/proc/{}/cwd", .{self.pid});
         } else {
-            try buffer.writer().print("/proc/{}/fd/{}", .{ self.pid, dfd });
+            try buffer.print("/proc/{}/fd/{}", .{ self.pid, dfd });
         }
-        const path = try std.fs.readLinkAbsolute(buffer.slice(), &output);
+        const path = try std.fs.readLinkAbsolute(buff[0..buffer.end], &output);
         @memset(output[path.len..], 0);
 
         return output;
@@ -138,10 +142,7 @@ pub const Perm = enum(u4) {
         return null;
     }
 
-    pub fn format(self: @This(), fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
-        _ = fmt;
-        _ = options;
-
+    pub fn format(self: @This(), writer: *std.io.Writer) !void {
         const e = @typeInfo(@This()).@"enum";
         inline for (e.fields) |field| {
             if (field.value == @intFromEnum(self)) return writer.print("{s}", .{field.name});
@@ -249,6 +250,8 @@ pub const DB = struct {
 
             if (e.entries.get(d[0..len])) |v| {
                 entry = v;
+            } else {
+                return perm;
             }
 
             if (d.len > len) {

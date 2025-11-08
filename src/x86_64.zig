@@ -83,15 +83,17 @@ pub fn execve(cpid: *ContextPID, regs: *C.struct_user_regs_struct) !void {
 pub fn kill(cpid: *ContextPID, regs: *C.struct_user_regs_struct) !void {
     const pid: C.pid_t = @bitCast(@as(u32, @truncate(regs.rdi)));
     debug.print("{}: kill {}, {}\n", .{ cpid.pid, pid, regs.rsi });
+    if (pid == cpid.pid) return;
     if (std.mem.indexOfAny(C.pid_t, cpid.pids.items, &.{pid})) |_| return;
     if (cpid.allow_kill) return;
 
     if (cpid.interactive) {
-        try std.io.getStdErr().writer().print("Allow to send kill {} to {} [y/N]: ", .{ regs.rsi, pid });
-        const input = try std.io.getStdIn().reader().readUntilDelimiterAlloc(cpid.alloc, '\n', std.math.maxInt(usize));
-        defer cpid.alloc.free(input);
-
-        if (std.mem.eql(u8, input, "y") or std.mem.eql(u8, input, "Y")) return;
+        while (true) {
+            try cpid.stderr.print("Allow {}: to kill {}, {} [y/n]: ", .{ cpid.pid, pid, regs.rsi });
+            const input = try cpid.stdin.takeSentinel('\n');
+            if (std.mem.eql(u8, input, "y") or std.mem.eql(u8, input, "Y")) return;
+            if (std.mem.eql(u8, input, "n") or std.mem.eql(u8, input, "N")) break;
+        }
     }
 
     regs.rax = std.math.maxInt(u64);
@@ -635,7 +637,7 @@ pub fn symlinkat(cpid: *ContextPID, regs: *C.struct_user_regs_struct) !void {
     defer cpid.alloc.free(path2);
 
     try file_interaction(cpid, regs, .f, path1);
-    try file_interaction(cpid, regs, .f, path1);
+    try file_interaction(cpid, regs, .f, path2);
 }
 
 pub fn readlinkat(cpid: *ContextPID, regs: *C.struct_user_regs_struct) !void {
@@ -752,12 +754,16 @@ fn file_interaction(cpid: *ContextPID, regs: *C.struct_user_regs_struct, perm: P
     }
 
     if (cpid.interactive) {
-        try std.io.getStdErr().writer().print("Add permissions {} to {s} [y/N]:", .{ perm, path });
-        const input = try std.io.getStdIn().reader().readUntilDelimiterAlloc(cpid.alloc, '\n', std.math.maxInt(usize));
-        defer cpid.alloc.free(input);
-        if (std.mem.eql(u8, input, "y") or std.mem.eql(u8, input, "Y")) {
-            try cpid.db.add(perm, path);
-            return;
+        while (true) {
+            try cpid.stderr.print("Add permissions {f} to {s} [y/n]: ", .{ perm, path });
+            const input = try cpid.stdin.takeSentinel('\n');
+            if (std.mem.eql(u8, input, "y") or std.mem.eql(u8, input, "Y")) {
+                try cpid.db.add(perm, path);
+                return;
+            }
+            if (std.mem.eql(u8, input, "n") or std.mem.eql(u8, input, "N")) {
+                break;
+            }
         }
     }
 

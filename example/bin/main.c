@@ -59,7 +59,7 @@ int main(void) {
 
   int res = fork();
 
-  if (res == -1) {
+  if (res < 0) {
     printf("Cannot fork %d\n", res);
     return 0;
   }

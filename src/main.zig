@@ -1,6 +1,5 @@
 const std = @import("std");
 const builtin = @import("builtin");
-// const debug = std.debug;
 const linux = std.os.linux;
 const c = std.c;
 
@@ -83,8 +82,9 @@ pub fn main() !void {
                 'u' => allow_unknown_syscalls = true,
                 'k' => allow_kill = true,
                 'h' => {
-                    var stdio = std.io.getStdIn();
-                    const w = stdio.writer();
+                    var stdout = std.fs.File.stdout();
+                    var writer = stdout.writer(&.{});
+                    const w = &writer.interface;
                     try w.print("Showing the help:\n", .{});
                     try w.print("-a Allow all\n", .{});
                     try w.print("-s Save on exit, in permissions.zon in the current directory\n", .{});
@@ -105,6 +105,15 @@ pub fn main() !void {
         std.debug.print("Not program specified\n", .{});
         std.process.exit(1);
     }
+
+    const file_stderr = std.fs.File.stderr();
+    var writer_stderr = file_stderr.writer(&.{});
+    const stderr = &writer_stderr.interface;
+
+    const file_stdin = std.fs.File.stdin();
+    var buffer_stdin: [1024]u8 = undefined;
+    var reader_stdin = file_stdin.reader(&buffer_stdin);
+    const stdin = &reader_stdin.interface;
 
     var cwd_path_buffer = std.mem.zeroes([std.fs.max_path_bytes]u8);
     const cwd_path = try std.fs.readLinkAbsolute("/proc/self/cwd", &cwd_path_buffer);
@@ -127,7 +136,6 @@ pub fn main() !void {
     try db.add(.fr, "/usr/lib/libc.so.6");
 
     var pid = run(@ptrCast(exe_path), @ptrCast(process_args.items), std.c.environ);
-    // const main_pid = pid;
     debug.print("MAIN PID: {}\n", .{pid});
 
     var context = std.AutoHashMap(C.__pid_t, ContextPID).init(alloc);
@@ -138,13 +146,13 @@ pub fn main() !void {
     if (std.fs.cwd().openFile(file_path, .{})) |file| {
         defer file.close();
         const data = try file.readToEndAlloc(alloc, std.math.maxInt(usize));
-        var status = std.zon.parse.Status{};
-        defer status.deinit(alloc);
-        const paths = std.zon.parse.fromSlice([]const base.DB.Path, alloc, @ptrCast(data), &status, .{}) catch |err| {
-            std.debug.print("Error {}: {}\n", .{ err, status });
+        var diag = std.zon.parse.Diagnostics{};
+        defer diag.deinit(alloc);
+        const paths = std.zon.parse.fromSlice([]const base.DB.Path, alloc, @ptrCast(data), &diag, .{}) catch |err| {
+            std.debug.print("Error {}:\n", .{err});
+            diag.format(stderr) catch {};
             std.process.exit(1);
         };
-        debug.print("Status: {}\n", .{status});
 
         for (paths) |path| {
             try db.add(path.@"0", path.@"1");
@@ -162,7 +170,9 @@ pub fn main() !void {
 
         if (base.DEBUG) {
             debug.print("Permissions: ", .{});
-            try std.zon.stringify.serialize(paths, .{}, std.io.getStdErr().writer());
+            const stdout = std.fs.File.stdout();
+            var writer = stdout.writer(&.{});
+            try std.zon.stringify.serialize(paths, .{}, &writer.interface);
             debug.print("\n", .{});
         }
     }
@@ -606,6 +616,8 @@ pub fn main() !void {
                         .allow_all = allow_all,
                         .allow_kill = allow_kill,
                         .interactive = interactive,
+                        .stderr = stderr,
+                        .stdin = stdin,
                     });
                     _ = linux.ptrace(C.PTRACE_SEIZE, pid, 0, 0, 0);
                     _ = linux.ptrace(C.PTRACE_SETOPTIONS, pid, 0, C.PTRACE_O_EXITKILL | C.PTRACE_O_TRACECLONE | C.PTRACE_O_TRACEFORK | C.PTRACE_O_TRACEVFORK | C.PTRACE_O_TRACESECCOMP, 0);
@@ -625,15 +637,16 @@ pub fn main() !void {
     debug.print("Results:\n", .{});
     const paths = try db.getPaths();
     if (base.DEBUG) {
-        try std.zon.stringify.serialize(paths, .{}, std.io.getStdErr().writer());
+        try std.zon.stringify.serialize(paths, .{}, stderr);
     }
     debug.print("\n", .{});
 
     if (save) {
         var file = try std.fs.cwd().createFile(file_path, .{});
         defer file.close();
+        var writer = file.writer(&.{});
 
-        try std.zon.stringify.serialize(paths, .{}, file.writer());
+        try std.zon.stringify.serialize(paths, .{}, &writer.interface);
         debug.print("File {s} saved with all perms\n", .{file_path});
     }
 

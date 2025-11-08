@@ -1,0 +1,9 @@
+.{
+    .{ .fr, "/etc/ld.so.preload" },
+    .{ .fr, "/etc/ld.so.cache" },
+    .{ .fr, "/usr/*" },
+    .{ .fr, "/lib/*" },
+    .{ .fr, "/var/*" },
+    .{ .fr, "/sys/*" },
+    .{ .fr, "/proc/self/*" },
+}
