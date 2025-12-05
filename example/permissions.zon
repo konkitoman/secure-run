@@ -1,4 +1,5 @@
 .{
+    .{ .f, "/" },
     .{ .fr, "/etc/ld.so.preload" },
     .{ .fr, "/etc/ld.so.cache" },
     .{ .fr, "/usr/*" },

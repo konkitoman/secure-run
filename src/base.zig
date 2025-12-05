@@ -185,6 +185,11 @@ pub const DB = struct {
         while (true) {
             const len = if (std.mem.indexOf(u8, d, "/")) |pos| pos else d.len;
 
+            if (len == 0 and d.len > 0) {
+                d = d[1..];
+                continue;
+            }
+
             if (d.len != 0) {
                 if (!entry.entries.contains(d[0..len])) {
                     if (std.mem.eql(u8, d[0..len], "*")) {
@@ -227,6 +232,12 @@ pub const DB = struct {
 
         while (d.len != 0) {
             const len = if (std.mem.indexOf(u8, d, "/")) |pos| pos else d.len;
+
+            if (len == 0 and d.len != 0) {
+                d = d[1..];
+                continue;
+            }
+
             const e = entry;
 
             if (e.all) {
@@ -286,9 +297,15 @@ pub const DB = struct {
                     try paths.append(self.alloc, .{ e.entry.perm, _path });
                 } else {
                     if (e.entry.perm != .none) {
-                        const _path = try self.alloc.alloc(u8, e.path.items.len);
-                        @memcpy(_path, e.path.items);
-                        try paths.append(self.alloc, .{ e.entry.perm, _path });
+                        if (e.path.items.len == 0) {
+                            const _path = try self.alloc.alloc(u8, 1);
+                            @memcpy(_path, "/");
+                            try paths.append(self.alloc, .{ e.entry.perm, _path });
+                        } else {
+                            const _path = try self.alloc.alloc(u8, e.path.items.len);
+                            @memcpy(_path, e.path.items);
+                            try paths.append(self.alloc, .{ e.entry.perm, _path });
+                        }
                     }
                 }
 
@@ -313,6 +330,35 @@ pub const DB = struct {
         self.alloc.free(paths);
     }
 };
+
+fn test_paths(db: *DB) !void {
+    try std.testing.expectEqual(db.access("/"), .f);
+    try std.testing.expectEqual(db.access("/a//b"), .fr);
+    try std.testing.expectEqual(db.access("/a/b"), .fr);
+    try std.testing.expectEqual(db.access("/a/c/b"), .frw);
+}
+
+test "DB_access" {
+    var db = try DB.init(std.testing.allocator);
+    defer db.deinit() catch {};
+    try db.add(.f, "/");
+    try db.add(.fr, "/a//b");
+    try db.add(.frw, "/a/c/b");
+
+    try test_paths(&db);
+
+    const paths = try db.getPaths();
+
+    var new_db = try DB.init(std.testing.allocator);
+    defer new_db.deinit() catch {};
+    for (paths) |path| {
+        try new_db.add(path.@"0", path.@"1");
+    }
+
+    db.freePaths(paths);
+
+    try test_paths(&new_db);
+}
 
 pub fn read_cstr_len(mem: std.fs.File, start: usize) !usize {
     var i: usize = 0;
