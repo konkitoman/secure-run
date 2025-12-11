@@ -121,11 +121,11 @@ pub fn main() !void {
 
     try process_args.append(alloc, null);
 
-    const exe_path = try std.fs.path.resolve(alloc, &.{ cwd_path, std.mem.sliceTo(process_args.items[0].?, 0) });
+    const exe_path = try base.resolveZ(alloc, &.{ cwd_path, std.mem.sliceTo(process_args.items[0].?, 0) });
     defer alloc.free(exe_path);
 
-    if (c.access(@ptrCast(exe_path), c.F_OK) != 0) {
-        std.debug.print("secure-run: no such file: {s}\n", .{exe_path});
+    if (c.access(exe_path, c.X_OK) != 0) {
+        std.debug.print("secure-run: cannot execute: {s}\n", .{exe_path});
         std.process.exit(1);
     }
 
@@ -142,8 +142,7 @@ pub fn main() !void {
     defer _ = ctx.db.deinit() catch {};
     defer ctx.pctxs.deinit();
 
-    try ctx.db.add(.frx, exe_path);
-    try ctx.db.add(.fr, "/usr/lib/libc.so.6");
+    try ctx.db.add(.frx, exe_path[0 .. exe_path.len - 1]);
 
     var pid = run(@ptrCast(exe_path), @ptrCast(process_args.items), std.c.environ);
     debug.print("MAIN PID: {}\n", .{pid});

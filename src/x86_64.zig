@@ -17,7 +17,7 @@ pub fn open(cpid: *ContextPID, regs: *C.struct_user_regs_struct) !void {
     const path = try std.fs.path.resolve(cpid.alloc, &.{ dfd_path, filename });
     defer cpid.alloc.free(path);
 
-    const perm = Perm.from_mode(@bitCast(@as(u32, @truncate(regs.rdx)))).?;
+    const perm = Perm.from_mode(@bitCast(@as(u32, @truncate(regs.rsi))));
 
     try file_interaction(cpid, regs, perm, path);
 }
@@ -77,7 +77,7 @@ pub fn execve(cpid: *ContextPID, regs: *C.struct_user_regs_struct) !void {
     const path = try std.fs.path.resolve(cpid.alloc, &.{ dfd_path, filename });
     defer cpid.alloc.free(path);
 
-    try file_interaction(cpid, regs, .frx, path);
+    try file_interaction(cpid, regs, .rx, path);
 }
 
 pub fn kill(cpid: *ContextPID, regs: *C.struct_user_regs_struct) !void {
@@ -119,7 +119,7 @@ pub fn truncate(cpid: *ContextPID, regs: *C.struct_user_regs_struct) !void {
     const path = try std.fs.path.resolve(cpid.alloc, &.{ dfd_path, filename });
     defer cpid.alloc.free(path);
 
-    try file_interaction(cpid, regs, .fw, path);
+    try file_interaction(cpid, regs, .w, path);
 }
 
 pub fn chdir(cpid: *ContextPID, regs: *C.struct_user_regs_struct) !void {
@@ -132,7 +132,7 @@ pub fn chdir(cpid: *ContextPID, regs: *C.struct_user_regs_struct) !void {
     const path = try std.fs.path.resolve(cpid.alloc, &.{ dfd_path, filename });
     defer cpid.alloc.free(path);
 
-    try file_interaction(cpid, regs, .f, path);
+    try file_interaction(cpid, regs, .r, path);
 }
 
 pub fn rename(cpid: *ContextPID, regs: *C.struct_user_regs_struct) !void {
@@ -150,8 +150,8 @@ pub fn rename(cpid: *ContextPID, regs: *C.struct_user_regs_struct) !void {
     const path2 = try std.fs.path.resolve(cpid.alloc, &.{ dfd_path, filename2 });
     defer cpid.alloc.free(path2);
 
-    try file_interaction(cpid, regs, .frw, path1);
-    try file_interaction(cpid, regs, .fw, path2);
+    try file_interaction(cpid, regs, .w, path1);
+    try file_interaction(cpid, regs, .c, path2);
 }
 
 pub fn mkdir(cpid: *ContextPID, regs: *C.struct_user_regs_struct) !void {
@@ -165,9 +165,7 @@ pub fn mkdir(cpid: *ContextPID, regs: *C.struct_user_regs_struct) !void {
     const path = try std.fs.path.resolve(cpid.alloc, &.{ dfd_path, filename });
     defer cpid.alloc.free(path);
 
-    const i = std.mem.lastIndexOf(u8, path, "/").?;
-    debug.print("Parent: {s}\n", .{path[0..i]});
-    try file_interaction(cpid, regs, .w, path[0..i]);
+    try file_interaction(cpid, regs, .c, path);
 }
 
 pub fn rmdir(cpid: *ContextPID, regs: *C.struct_user_regs_struct) !void {
@@ -181,7 +179,7 @@ pub fn rmdir(cpid: *ContextPID, regs: *C.struct_user_regs_struct) !void {
     const path = try std.fs.path.resolve(cpid.alloc, &.{ dfd_path, filename });
     defer cpid.alloc.free(path);
 
-    try file_interaction(cpid, regs, .fw, path);
+    try file_interaction(cpid, regs, .w, path);
 }
 
 pub fn creat(cpid: *ContextPID, regs: *C.struct_user_regs_struct) !void {
@@ -195,7 +193,7 @@ pub fn creat(cpid: *ContextPID, regs: *C.struct_user_regs_struct) !void {
     const path = try std.fs.path.resolve(cpid.alloc, &.{ dfd_path, filename });
     defer cpid.alloc.free(path);
 
-    try file_interaction(cpid, regs, .fw, path);
+    try file_interaction(cpid, regs, .wc, path);
 }
 
 pub fn link(cpid: *ContextPID, regs: *C.struct_user_regs_struct) !void {
@@ -214,7 +212,7 @@ pub fn link(cpid: *ContextPID, regs: *C.struct_user_regs_struct) !void {
     defer cpid.alloc.free(path2);
 
     try file_interaction(cpid, regs, .f, path1);
-    try file_interaction(cpid, regs, .f, path2);
+    try file_interaction(cpid, regs, .c, path2);
 }
 
 pub fn unlink(cpid: *ContextPID, regs: *C.struct_user_regs_struct) !void {
@@ -228,7 +226,7 @@ pub fn unlink(cpid: *ContextPID, regs: *C.struct_user_regs_struct) !void {
     const path = try std.fs.path.resolve(cpid.alloc, &.{ dfd_path, filename });
     defer cpid.alloc.free(path);
 
-    try file_interaction(cpid, regs, .fw, path);
+    try file_interaction(cpid, regs, .w, path);
 }
 
 pub fn symlink(cpid: *ContextPID, regs: *C.struct_user_regs_struct) !void {
@@ -247,7 +245,7 @@ pub fn symlink(cpid: *ContextPID, regs: *C.struct_user_regs_struct) !void {
     defer cpid.alloc.free(path2);
 
     try file_interaction(cpid, regs, .f, path1);
-    try file_interaction(cpid, regs, .f, path2);
+    try file_interaction(cpid, regs, .c, path2);
 }
 
 pub fn readlink(cpid: *ContextPID, regs: *C.struct_user_regs_struct) !void {
@@ -260,7 +258,7 @@ pub fn readlink(cpid: *ContextPID, regs: *C.struct_user_regs_struct) !void {
     const path = try std.fs.path.resolve(cpid.alloc, &.{ dfd_path, filename });
     defer cpid.alloc.free(path);
 
-    try file_interaction(cpid, regs, .fr, path);
+    try file_interaction(cpid, regs, .f, path);
 }
 
 pub fn chmod(cpid: *ContextPID, regs: *C.struct_user_regs_struct) !void {
@@ -273,7 +271,7 @@ pub fn chmod(cpid: *ContextPID, regs: *C.struct_user_regs_struct) !void {
     const path = try std.fs.path.resolve(cpid.alloc, &.{ dfd_path, filename });
     defer cpid.alloc.free(path);
 
-    try file_interaction(cpid, regs, .fw, path);
+    try file_interaction(cpid, regs, .w, path);
 }
 
 pub fn chown(cpid: *ContextPID, regs: *C.struct_user_regs_struct) !void {
@@ -286,7 +284,7 @@ pub fn chown(cpid: *ContextPID, regs: *C.struct_user_regs_struct) !void {
     const path = try std.fs.path.resolve(cpid.alloc, &.{ dfd_path, filename });
     defer cpid.alloc.free(path);
 
-    try file_interaction(cpid, regs, .fw, path);
+    try file_interaction(cpid, regs, .w, path);
 }
 
 pub fn ptrace(cpid: *ContextPID, regs: *C.struct_user_regs_struct) !void {
@@ -315,7 +313,7 @@ pub fn lchown(cpid: *ContextPID, regs: *C.struct_user_regs_struct) !void {
     const path = try std.fs.path.resolve(cpid.alloc, &.{ dfd_path, filename });
     defer cpid.alloc.free(path);
 
-    try file_interaction(cpid, regs, .fw, path);
+    try file_interaction(cpid, regs, .w, path);
 }
 
 pub fn utime(cpid: *ContextPID, regs: *C.struct_user_regs_struct) !void {
@@ -328,7 +326,7 @@ pub fn utime(cpid: *ContextPID, regs: *C.struct_user_regs_struct) !void {
     const path = try std.fs.path.resolve(cpid.alloc, &.{ dfd_path, filename });
     defer cpid.alloc.free(path);
 
-    try file_interaction(cpid, regs, .fw, path);
+    try file_interaction(cpid, regs, .w, path);
 }
 
 pub fn mknod(cpid: *ContextPID, regs: *C.struct_user_regs_struct) !void {
@@ -341,7 +339,7 @@ pub fn mknod(cpid: *ContextPID, regs: *C.struct_user_regs_struct) !void {
     const path = try std.fs.path.resolve(cpid.alloc, &.{ dfd_path, filename });
     defer cpid.alloc.free(path);
 
-    try file_interaction(cpid, regs, .fw, path);
+    try file_interaction(cpid, regs, .c, path);
 }
 
 pub fn statfs(cpid: *ContextPID, regs: *C.struct_user_regs_struct) !void {
@@ -354,7 +352,7 @@ pub fn statfs(cpid: *ContextPID, regs: *C.struct_user_regs_struct) !void {
     const path = try std.fs.path.resolve(cpid.alloc, &.{ dfd_path, filename });
     defer cpid.alloc.free(path);
 
-    try file_interaction(cpid, regs, .fw, path);
+    try file_interaction(cpid, regs, .f, path);
 }
 
 pub fn chroot(cpid: *ContextPID, regs: *C.struct_user_regs_struct) !void {
@@ -367,7 +365,7 @@ pub fn chroot(cpid: *ContextPID, regs: *C.struct_user_regs_struct) !void {
     const path = try std.fs.path.resolve(cpid.alloc, &.{ dfd_path, filename });
     defer cpid.alloc.free(path);
 
-    try file_interaction(cpid, regs, .frw, path);
+    try file_interaction(cpid, regs, .f, path);
 }
 
 pub fn acct(cpid: *ContextPID, regs: *C.struct_user_regs_struct) !void {
@@ -382,7 +380,7 @@ pub fn acct(cpid: *ContextPID, regs: *C.struct_user_regs_struct) !void {
     const path = try std.fs.path.resolve(cpid.alloc, &.{ dfd_path, filename });
     defer cpid.alloc.free(path);
 
-    try file_interaction(cpid, regs, .fw, path);
+    try file_interaction(cpid, regs, .w, path);
 }
 
 pub fn mount(cpid: *ContextPID, regs: *C.struct_user_regs_struct) !void {
@@ -401,7 +399,7 @@ pub fn mount(cpid: *ContextPID, regs: *C.struct_user_regs_struct) !void {
     defer cpid.alloc.free(path2);
 
     try file_interaction(cpid, regs, .f, path1);
-    try file_interaction(cpid, regs, .f, path2);
+    try file_interaction(cpid, regs, .c, path2);
 }
 
 pub fn umount(cpid: *ContextPID, regs: *C.struct_user_regs_struct) !void {
@@ -414,7 +412,7 @@ pub fn umount(cpid: *ContextPID, regs: *C.struct_user_regs_struct) !void {
     const path = try std.fs.path.resolve(cpid.alloc, &.{ dfd_path, filename });
     defer cpid.alloc.free(path);
 
-    try file_interaction(cpid, regs, .fw, path);
+    try file_interaction(cpid, regs, .w, path);
 }
 
 pub fn swapon(cpid: *ContextPID, regs: *C.struct_user_regs_struct) !void {
@@ -451,7 +449,7 @@ pub fn setxattr(cpid: *ContextPID, regs: *C.struct_user_regs_struct) !void {
     const path = try std.fs.path.resolve(cpid.alloc, &.{ dfd_path, filename });
     defer cpid.alloc.free(path);
 
-    try file_interaction(cpid, regs, .fw, path);
+    try file_interaction(cpid, regs, .w, path);
 }
 
 pub fn lsetxattr(cpid: *ContextPID, regs: *C.struct_user_regs_struct) !void {
@@ -493,7 +491,7 @@ pub fn utimes(cpid: *ContextPID, regs: *C.struct_user_regs_struct) !void {
     const path = try std.fs.path.resolve(cpid.alloc, &.{ dfd_path, filename });
     defer cpid.alloc.free(path);
 
-    try file_interaction(cpid, regs, .fw, path);
+    try file_interaction(cpid, regs, .w, path);
 }
 
 pub fn openat(cpid: *ContextPID, regs: *C.struct_user_regs_struct) !void {
@@ -508,7 +506,9 @@ pub fn openat(cpid: *ContextPID, regs: *C.struct_user_regs_struct) !void {
 
     const path = try std.fs.path.resolve(cpid.alloc, &.{ dfd_path, filename });
     defer cpid.alloc.free(path);
-    const perm = Perm.from_mode(@intCast(regs.r10)).?;
+
+    const perm = Perm.from_mode(@intCast(regs.rdx));
+
     try file_interaction(cpid, regs, perm, path);
 }
 
@@ -522,22 +522,21 @@ pub fn mkdirat(cpid: *ContextPID, regs: *C.struct_user_regs_struct) !void {
     const path = try std.fs.path.resolve(cpid.alloc, &.{ dfd_path, filename });
     defer cpid.alloc.free(path);
 
-    const i = std.mem.lastIndexOf(u8, path, "/").?;
-    debug.print("Parent: {s}\n", .{path[0..i]});
-    try file_interaction(cpid, regs, .w, path[0..i]);
+    try file_interaction(cpid, regs, .c, path);
 }
 
 pub fn mknodat(cpid: *ContextPID, regs: *C.struct_user_regs_struct) !void {
+    const dfd: c_int = @bitCast(@as(c_uint, @truncate(regs.rdi)));
     const _filename = try cpid.read_filename(regs.rsi);
     const filename = std.mem.sliceTo(&_filename, 0);
-    debug.print("mknodat {}, {s}, {}, {}\n", .{ regs.rdi, filename, regs.rdx, regs.r10 });
-    const dfd_path_buffer = try cpid.read_dfd_path(@bitCast(@as(u32, @truncate(regs.rdi))));
+    const dfd_path_buffer = try cpid.read_dfd_path(dfd);
     const dfd_path = std.mem.sliceTo(&dfd_path_buffer, 0);
+    debug.print("mknodat {}={s}, {s}, {}, {}\n", .{ regs.rdi, dfd_path, filename, regs.rdx, regs.r10 });
 
     const path = try std.fs.path.resolve(cpid.alloc, &.{ dfd_path, filename });
     defer cpid.alloc.free(path);
 
-    try file_interaction(cpid, regs, .fw, path);
+    try file_interaction(cpid, regs, .c, path);
 }
 
 pub fn fchownat(cpid: *ContextPID, regs: *C.struct_user_regs_struct) !void {
@@ -550,7 +549,7 @@ pub fn fchownat(cpid: *ContextPID, regs: *C.struct_user_regs_struct) !void {
     const path = try std.fs.path.resolve(cpid.alloc, &.{ dfd_path, filename });
     defer cpid.alloc.free(path);
 
-    try file_interaction(cpid, regs, .fw, path);
+    try file_interaction(cpid, regs, .w, path);
 }
 
 pub fn futimesat(cpid: *ContextPID, regs: *C.struct_user_regs_struct) !void {
@@ -563,7 +562,7 @@ pub fn futimesat(cpid: *ContextPID, regs: *C.struct_user_regs_struct) !void {
     const path = try std.fs.path.resolve(cpid.alloc, &.{ dfd_path, filename });
     defer cpid.alloc.free(path);
 
-    try file_interaction(cpid, regs, .fw, path);
+    try file_interaction(cpid, regs, .w, path);
 }
 
 pub fn newfstatat(cpid: *ContextPID, regs: *C.struct_user_regs_struct) !void {
@@ -589,7 +588,7 @@ pub fn unlinkat(cpid: *ContextPID, regs: *C.struct_user_regs_struct) !void {
     const path = try std.fs.path.resolve(cpid.alloc, &.{ dfd_path, filename });
     defer cpid.alloc.free(path);
 
-    try file_interaction(cpid, regs, .fw, path);
+    try file_interaction(cpid, regs, .w, path);
 }
 
 pub fn renameat(cpid: *ContextPID, regs: *C.struct_user_regs_struct) !void {
@@ -606,8 +605,8 @@ pub fn renameat(cpid: *ContextPID, regs: *C.struct_user_regs_struct) !void {
     const path2 = try std.fs.path.resolve(cpid.alloc, &.{ dfd_path, filename2 });
     defer cpid.alloc.free(path2);
 
-    try file_interaction(cpid, regs, .frw, path1);
-    try file_interaction(cpid, regs, .fw, path1);
+    try file_interaction(cpid, regs, .w, path1);
+    try file_interaction(cpid, regs, .c, path1);
 }
 
 pub fn linkat(cpid: *ContextPID, regs: *C.struct_user_regs_struct) !void {
@@ -625,7 +624,7 @@ pub fn linkat(cpid: *ContextPID, regs: *C.struct_user_regs_struct) !void {
     defer cpid.alloc.free(path2);
 
     try file_interaction(cpid, regs, .f, path1);
-    try file_interaction(cpid, regs, .f, path1);
+    try file_interaction(cpid, regs, .c, path1);
 }
 
 pub fn symlinkat(cpid: *ContextPID, regs: *C.struct_user_regs_struct) !void {
@@ -645,7 +644,7 @@ pub fn symlinkat(cpid: *ContextPID, regs: *C.struct_user_regs_struct) !void {
     defer cpid.alloc.free(path2);
 
     try file_interaction(cpid, regs, .f, path1);
-    try file_interaction(cpid, regs, .f, path2);
+    try file_interaction(cpid, regs, .c, path2);
 }
 
 pub fn readlinkat(cpid: *ContextPID, regs: *C.struct_user_regs_struct) !void {
@@ -658,7 +657,7 @@ pub fn readlinkat(cpid: *ContextPID, regs: *C.struct_user_regs_struct) !void {
     const path = try std.fs.path.resolve(cpid.alloc, &.{ dfd_path, filename });
     defer cpid.alloc.free(path);
 
-    try file_interaction(cpid, regs, .fr, path);
+    try file_interaction(cpid, regs, .f, path);
 }
 
 pub fn fchmodat(cpid: *ContextPID, regs: *C.struct_user_regs_struct) !void {
@@ -671,7 +670,7 @@ pub fn fchmodat(cpid: *ContextPID, regs: *C.struct_user_regs_struct) !void {
     const path = try std.fs.path.resolve(cpid.alloc, &.{ dfd_path, filename });
     defer cpid.alloc.free(path);
 
-    try file_interaction(cpid, regs, .fw, path);
+    try file_interaction(cpid, regs, .w, path);
 }
 
 pub fn faccessat(cpid: *ContextPID, regs: *C.struct_user_regs_struct) !void {
@@ -697,7 +696,7 @@ pub fn utimensat(cpid: *ContextPID, regs: *C.struct_user_regs_struct) !void {
     const path = try std.fs.path.resolve(cpid.alloc, &.{ dfd_path, filename });
     defer cpid.alloc.free(path);
 
-    try file_interaction(cpid, regs, .fw, path);
+    try file_interaction(cpid, regs, .w, path);
 }
 
 pub fn renameat2(cpid: *ContextPID, regs: *C.struct_user_regs_struct) !void {
@@ -716,8 +715,8 @@ pub fn renameat2(cpid: *ContextPID, regs: *C.struct_user_regs_struct) !void {
     const path2 = try std.fs.path.resolve(cpid.alloc, &.{ o_dfd_path, filename2 });
     defer cpid.alloc.free(path2);
 
-    try file_interaction(cpid, regs, .frw, path1);
-    try file_interaction(cpid, regs, .fw, path1);
+    try file_interaction(cpid, regs, .w, path1);
+    try file_interaction(cpid, regs, .c, path1);
 }
 
 pub fn execveat(cpid: *ContextPID, regs: *C.struct_user_regs_struct) !void {
@@ -730,7 +729,7 @@ pub fn execveat(cpid: *ContextPID, regs: *C.struct_user_regs_struct) !void {
     const path = try std.fs.path.resolve(cpid.alloc, &.{ dfd_path, filename });
     defer cpid.alloc.free(path);
 
-    try file_interaction(cpid, regs, .frx, path);
+    try file_interaction(cpid, regs, .rx, path);
 }
 
 pub fn statx(cpid: *ContextPID, regs: *C.struct_user_regs_struct) !void {

@@ -77,7 +77,7 @@ pub const ContextPID = struct {
     }
 };
 
-pub const Perm = enum(u4) {
+pub const Perm = enum(u5) {
     none = 0,
     f = 1,
     r = 2,
@@ -94,6 +94,22 @@ pub const Perm = enum(u4) {
     fwx = 13,
     rwx = 14,
     frwx = 15,
+    c = 16,
+    fc = 17,
+    rc = 18,
+    frc = 19,
+    wc = 20,
+    fwc = 21,
+    rwc = 22,
+    frwc = 23,
+    xc = 24,
+    fxc = 25,
+    rxc = 26,
+    frxc = 27,
+    wxc = 28,
+    fwxc = 29,
+    rwxc = 30,
+    frwxc = 31,
 
     pub fn update(self: Perm, rhs: Perm) Perm {
         return @enumFromInt(@intFromEnum(self) | @intFromEnum(rhs));
@@ -107,24 +123,39 @@ pub const Perm = enum(u4) {
     pub fn from_amode(int: c_int) ?Perm {
         return switch (int) {
             C.F_OK => .f,
-            C.X_OK => .fx,
-            C.W_OK => .fw,
-            C.W_OK | C.X_OK => .fwx,
-            C.R_OK => .fr,
-            C.R_OK | C.X_OK => .frx,
-            C.R_OK | C.W_OK => .frw,
-            C.R_OK | C.W_OK | C.X_OK => .frwx,
+            C.X_OK => .x,
+            C.W_OK => .w,
+            C.W_OK | C.X_OK => .wx,
+            C.R_OK => .r,
+            C.R_OK | C.X_OK => .rx,
+            C.R_OK | C.W_OK => .rw,
+            C.R_OK | C.W_OK | C.X_OK => .rwx,
 
             else => null,
         };
     }
 
-    pub fn from_mode(int: c_int) ?Perm {
-        if (int & 3 == C.O_RDONLY) return .fr;
-        if (int & 3 == C.O_WRONLY) return .fw;
-        if (int & 3 == C.O_RDWR) return .frw;
+    pub fn from_mode(int: c_int) Perm {
+        var perm: Perm = .none;
 
-        return null;
+        if (int & 3 == C.O_RDONLY) {
+            perm = perm.update(.r);
+        }
+        if (int & 3 == C.O_WRONLY) {
+            perm = perm.update(.w);
+        }
+        if (int & 3 == C.O_RDWR) {
+            perm = perm.update(.rw);
+        }
+
+        if (int & C.O_CREAT == C.O_CREAT) {
+            perm = perm.update(.c);
+        }
+        if (int & C.O_TRUNC == C.O_TRUNC) {
+            perm = perm.update(.w);
+        }
+
+        return perm;
     }
 
     pub fn format(self: @This(), writer: *std.io.Writer) !void {
@@ -388,4 +419,85 @@ pub fn read_cstr(alloc: Allocator, mem: std.fs.File, start: usize) ![]u8 {
 
 pub fn read(mem: std.fs.File, buffer: []u8, start: usize) !void {
     _ = try mem.preadAll(buffer, start);
+}
+
+/// This function is like a series of `cd` statements executed one after another.
+/// It resolves "." and "..", but will not convert relative path to absolute path, use std.fs.Dir.realpath instead.
+/// The result does not have a trailing path separator.
+/// This function does not perform any syscalls. Executing this series of path
+/// lookups on the actual filesystem may produce different results due to
+/// symlinks.
+pub fn resolveZ(allocator: Allocator, paths: []const []const u8) Allocator.Error![:0]u8 {
+    assert(paths.len > 0);
+
+    var result = std.array_list.Managed(u8).init(allocator);
+    defer result.deinit();
+
+    var negative_count: usize = 0;
+    var is_abs = false;
+
+    for (paths) |p| {
+        if (std.fs.path.isAbsolutePosix(p)) {
+            is_abs = true;
+            negative_count = 0;
+            result.clearRetainingCapacity();
+        }
+        var it = std.mem.tokenizeScalar(u8, p, '/');
+        while (it.next()) |component| {
+            if (std.mem.eql(u8, component, ".")) {
+                continue;
+            } else if (std.mem.eql(u8, component, "..")) {
+                if (result.items.len == 0) {
+                    negative_count += @intFromBool(!is_abs);
+                    continue;
+                }
+                while (true) {
+                    const ends_with_slash = result.items[result.items.len - 1] == '/';
+                    result.items.len -= 1;
+                    if (ends_with_slash or result.items.len == 0) break;
+                }
+            } else if (result.items.len > 0 or is_abs) {
+                try result.ensureUnusedCapacity(1 + component.len);
+                result.appendAssumeCapacity('/');
+                result.appendSliceAssumeCapacity(component);
+            } else {
+                try result.appendSlice(component);
+            }
+        }
+    }
+
+    if (result.items.len == 0) {
+        if (is_abs) {
+            return allocator.dupeZ(u8, "/\x00");
+        }
+        if (negative_count == 0) {
+            return allocator.dupeZ(u8, ".\x00");
+        } else {
+            const real_result = try allocator.allocSentinel(u8, 3 * negative_count - 1, 0);
+            var count = negative_count - 1;
+            var i: usize = 0;
+            while (count > 0) : (count -= 1) {
+                real_result[i..][0..3].* = "../".*;
+                i += 3;
+            }
+            real_result[i..][0..2].* = "..".*;
+            return real_result;
+        }
+    }
+
+    try result.append(0);
+
+    if (negative_count == 0) {
+        return result.toOwnedSliceSentinel(0);
+    } else {
+        const real_result = try allocator.allocSentinel(u8, 3 * negative_count + result.items.len, 0);
+        var count = negative_count;
+        var i: usize = 0;
+        while (count > 0) : (count -= 1) {
+            real_result[i..][0..3].* = "../".*;
+            i += 3;
+        }
+        @memcpy(real_result[i..][0..result.items.len], result.items);
+        return real_result;
+    }
 }
