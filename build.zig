@@ -11,12 +11,12 @@ pub fn build(b: *std.Build) void {
         .link_libc = true,
     });
 
+    module.linkSystemLibrary("seccomp", .{ .needed = true });
+
     const exe = b.addExecutable(.{
         .name = "secure-run",
         .root_module = module,
     });
-
-    exe.linkSystemLibrary("seccomp");
 
     b.installArtifact(exe);
 

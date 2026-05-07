@@ -25,12 +25,13 @@ pub const Context = struct {
     allow_all: bool,
     allow_kill: bool,
     interactive: bool,
-    stderr: *std.io.Writer,
-    stdin: *std.io.Reader,
+    stderr: *std.Io.Writer,
+    stdin: *std.Io.Reader,
 };
 
 pub const ContextPID = struct {
     context: *Context,
+    io: std.Io,
     alloc: Allocator,
     pid: C.pid_t,
     unimplemented: bool = false,
@@ -43,7 +44,7 @@ pub const ContextPID = struct {
             .len = buffer.len,
         }}, &.{.{
             .base = @ptrFromInt(from),
-            .len = C.ARG_MAX,
+            .len = 2097152, // value returned by, `getconf ARG_MAX`
         }}, 0);
 
         @memset(buffer[len..], 0);
@@ -53,7 +54,7 @@ pub const ContextPID = struct {
 
     pub fn read_dfd_path(self: *@This(), dfd: c_int) ![std.fs.max_path_bytes]u8 {
         var buff: [std.fs.max_path_bytes]u8 = undefined;
-        var buffer = std.io.Writer.fixed(&buff);
+        var buffer = std.Io.Writer.fixed(&buff);
 
         var output: [std.fs.max_path_bytes]u8 = undefined;
         if (dfd == C.AT_FDCWD) {
@@ -61,8 +62,8 @@ pub const ContextPID = struct {
         } else {
             try buffer.print("/proc/{}/fd/{}", .{ self.pid, dfd });
         }
-        const path = try std.fs.readLinkAbsolute(buff[0..buffer.end], &output);
-        @memset(output[path.len..], 0);
+        const path_len = try std.Io.Dir.readLinkAbsolute(self.io, buff[0..buffer.end], &output);
+        @memset(output[path_len..], 0);
 
         return output;
     }
@@ -158,7 +159,7 @@ pub const Perm = enum(u5) {
         return perm;
     }
 
-    pub fn format(self: @This(), writer: *std.io.Writer) !void {
+    pub fn format(self: @This(), writer: *std.Io.Writer) !void {
         const e = @typeInfo(@This()).@"enum";
         inline for (e.fields) |field| {
             if (field.value == @intFromEnum(self)) return writer.print("{s}", .{field.name});
@@ -168,7 +169,7 @@ pub const Perm = enum(u5) {
 
 pub const Entry = struct {
     perm: Perm = .none,
-    entries: std.StringArrayHashMapUnmanaged(Entry),
+    entries: std.array_hash_map.String(Entry),
     all: bool = false,
 };
 
@@ -177,14 +178,14 @@ pub const DB = struct {
     root: Entry,
 
     pub fn init(alloc: Allocator) !@This() {
-        return .{ .alloc = alloc, .root = .{ .entries = try std.StringArrayHashMapUnmanaged(Entry).init(alloc, &.{}, &.{}) } };
+        return .{ .alloc = alloc, .root = .{ .entries = try std.array_hash_map.String(Entry).init(alloc, &.{}, &.{}) } };
     }
 
     pub fn deinit(self: *@This()) !void {
-        var stack = std.ArrayListUnmanaged(Entry){};
+        var stack: std.ArrayList(Entry) = .empty;
         defer stack.deinit(self.alloc);
 
-        var to_deinit = std.ArrayListUnmanaged(Entry){};
+        var to_deinit: std.ArrayList(Entry) = .empty;
         defer to_deinit.deinit(self.alloc);
 
         try stack.append(self.alloc, self.root);
@@ -301,17 +302,17 @@ pub const DB = struct {
     };
 
     pub fn getPaths(self: @This()) ![]const Path {
-        var paths = std.ArrayListUnmanaged(Path){};
+        var paths: std.ArrayList(Path) = .empty;
 
         const E = struct {
-            path: std.ArrayListUnmanaged(u8),
+            path: std.ArrayList(u8),
             entry: Entry,
         };
 
-        var entries = std.ArrayListUnmanaged(E){};
+        var entries: std.ArrayList(E) = .empty;
         defer entries.deinit(self.alloc);
 
-        try entries.append(self.alloc, .{ .path = .{}, .entry = self.root });
+        try entries.append(self.alloc, .{ .path = .empty, .entry = self.root });
 
         while (entries.items.len != 0) {
             const _entries = try self.alloc.alloc(E, entries.items.len);

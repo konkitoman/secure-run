@@ -45,12 +45,10 @@ pub fn run(path: [*:0]const u8, argv: [*:null]const ?[*:0]const u8, envp: [*:nul
     return r;
 }
 
-pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const alloc = gpa.allocator();
+pub fn main(init: std.process.Init) !void {
+    const alloc = init.gpa;
 
-    var process_args = std.ArrayListUnmanaged(?[*:0]const u8){};
+    var process_args: std.ArrayList(?[*:0]const u8) = .empty;
     defer process_args.deinit(alloc);
     var read_args = false;
 
@@ -61,7 +59,7 @@ pub fn main() !void {
     var allow_unknown_syscalls = false;
     var allow_kill = false;
 
-    var args = std.process.args();
+    var args = init.minimal.args.iterate();
     while (args.next()) |arg| {
         if (read_args) {
             try process_args.append(alloc, arg);
@@ -83,8 +81,8 @@ pub fn main() !void {
                 'u' => allow_unknown_syscalls = true,
                 'k' => allow_kill = true,
                 'h' => {
-                    var stdout = std.fs.File.stdout();
-                    var writer = stdout.writer(&.{});
+                    var stdout = std.Io.File.stdout();
+                    var writer = stdout.writer(init.io, &.{});
                     const w = &writer.interface;
                     try w.print("Showing the help:\n", .{});
                     try w.print("-a Allow all\n", .{});
@@ -107,21 +105,21 @@ pub fn main() !void {
         std.process.exit(1);
     }
 
-    const file_stderr = std.fs.File.stderr();
-    var writer_stderr = file_stderr.writer(&.{});
+    const file_stderr = std.Io.File.stderr();
+    var writer_stderr = file_stderr.writer(init.io, &.{});
     const stderr = &writer_stderr.interface;
 
-    const file_stdin = std.fs.File.stdin();
+    const file_stdin = std.Io.File.stdin();
     var buffer_stdin: [1024]u8 = undefined;
-    var reader_stdin = file_stdin.reader(&buffer_stdin);
+    var reader_stdin = file_stdin.reader(init.io, &buffer_stdin);
     const stdin = &reader_stdin.interface;
 
     var cwd_path_buffer = std.mem.zeroes([std.fs.max_path_bytes]u8);
-    const cwd_path = try std.fs.readLinkAbsolute("/proc/self/cwd", &cwd_path_buffer);
+    const cwd_path_len = try std.Io.Dir.readLinkAbsolute(init.io, "/proc/self/cwd", &cwd_path_buffer);
 
     try process_args.append(alloc, null);
 
-    const exe_path = try base.resolveZ(alloc, &.{ cwd_path, std.mem.sliceTo(process_args.items[0].?, 0) });
+    const exe_path = try base.resolveZ(alloc, &.{ cwd_path_buffer[0..cwd_path_len], std.mem.sliceTo(process_args.items[0].?, 0) });
     defer alloc.free(exe_path);
 
     if (c.access(exe_path, c.X_OK) != 0) {
@@ -149,12 +147,13 @@ pub fn main() !void {
 
     const file_path = "permissions.zon";
     debug.print("Opening: {s}\n", .{file_path});
-    if (std.fs.cwd().openFile(file_path, .{})) |file| {
-        defer file.close();
-        const data = try file.readToEndAlloc(alloc, std.math.maxInt(usize));
+    if (std.Io.Dir.cwd().openFile(init.io, file_path, .{})) |file| {
+        defer file.close(init.io);
+        var file_reader = file.reader(init.io, &.{});
+        const data = try file_reader.interface.allocRemaining(alloc, .unlimited);
         var diag = std.zon.parse.Diagnostics{};
         defer diag.deinit(alloc);
-        const paths = std.zon.parse.fromSlice([]const base.DB.Path, alloc, @ptrCast(data), &diag, .{}) catch |err| {
+        const paths = std.zon.parse.fromSliceAlloc([]const base.DB.Path, alloc, @ptrCast(data), &diag, .{}) catch |err| {
             std.debug.print("Error {}:\n", .{err});
             diag.format(stderr) catch {};
             std.process.exit(1);
@@ -176,8 +175,8 @@ pub fn main() !void {
 
         if (base.DEBUG) {
             debug.print("Permissions: ", .{});
-            const stdout = std.fs.File.stdout();
-            var writer = stdout.writer(&.{});
+            const stdout = std.Io.File.stdout();
+            var writer = stdout.writer(init.io, &.{});
             try std.zon.stringify.serialize(paths, .{}, &writer.interface);
             debug.print("\n", .{});
         }
@@ -530,7 +529,7 @@ pub fn main() !void {
             break;
         }
 
-        switch ((status.signo >> 8) & 0xff) {
+        switch ((@intFromEnum(status.signo) >> 8) & 0xff) {
             0 => {
                 debug.print("{}: SUCCESS\n", .{pid});
                 _ = linux.ptrace(C.PTRACE_DETACH, pid, 0, 0, 0);
@@ -540,8 +539,8 @@ pub fn main() !void {
                     _ = ctx.pctxs.remove(pid);
                 }
             },
-            c.SIG.TRAP => {
-                switch (status.signo >> 16) {
+            @intFromEnum(c.SIG.TRAP) => {
+                switch (@intFromEnum(status.signo) >> 16) {
                     0 => {
                         debug.print("PTRACE RESET\n", .{});
                     },
@@ -592,12 +591,12 @@ pub fn main() !void {
                         debug.print("{}: EVENT_STOP\n", .{pid});
                     },
                     else => {
-                        debug.print("Unknown event {}\n", .{status.signo >> 16});
-                        sig = status.signo >> 8;
+                        debug.print("Unknown event {}\n", .{@intFromEnum(status.signo) >> 16});
+                        sig = @as(i32, @bitCast(@intFromEnum(status.signo))) >> 8;
                     },
                 }
             },
-            c.SIG.STOP => {
+            @intFromEnum(c.SIG.STOP) => {
                 debug.print("{}: STOP\n", .{pid});
 
                 if (!ctx.pctxs.contains(pid)) {
@@ -605,16 +604,17 @@ pub fn main() !void {
                         .context = &ctx,
                         .pid = pid,
                         .alloc = alloc,
+                        .io = init.io,
                     });
                     _ = linux.ptrace(C.PTRACE_SEIZE, pid, 0, 0, 0);
                     _ = linux.ptrace(C.PTRACE_SETOPTIONS, pid, 0, C.PTRACE_O_EXITKILL | C.PTRACE_O_TRACECLONE | C.PTRACE_O_TRACEFORK | C.PTRACE_O_TRACEVFORK | C.PTRACE_O_TRACESECCOMP, 0);
                     _ = linux.ptrace(C.PTRACE_CONT, pid, 0, 0, 0);
                 } else {
-                    sig = status.signo >> 8;
+                    sig = @as(i32, @bitCast(@intFromEnum(status.signo))) >> 8;
                 }
             },
             else => {
-                sig = status.signo >> 8;
+                sig = @as(i32, @bitCast(@intFromEnum(status.signo))) >> 8;
             },
         }
 
@@ -629,9 +629,9 @@ pub fn main() !void {
     debug.print("\n", .{});
 
     if (save) {
-        var file = try std.fs.cwd().createFile(file_path, .{});
-        defer file.close();
-        var writer = file.writer(&.{});
+        var file = try std.Io.Dir.cwd().createFile(init.io, file_path, .{});
+        defer file.close(init.io);
+        var writer = file.writer(init.io, &.{});
 
         try std.zon.stringify.serialize(paths, .{}, &writer.interface);
         debug.print("File {s} saved with all perms\n", .{file_path});
