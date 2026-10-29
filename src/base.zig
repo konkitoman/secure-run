@@ -2,15 +2,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const assert = std.debug.assert;
 
-pub const C = @cImport({
-    @cInclude("unistd.h");
-    @cInclude("sys/user.h");
-    @cInclude("linux/ptrace.h");
-    @cInclude("seccomp.h");
-    @cInclude("limits.h");
-    @cInclude("fcntl.h");
-});
-
+pub const C = @import("c");
 pub const DEBUG = true;
 
 pub const debug = struct {
@@ -39,15 +31,17 @@ pub const ContextPID = struct {
     pub fn read_filename(self: *@This(), from: usize) ![C.PATH_MAX]u8 {
         var buffer = std.mem.zeroes([C.PATH_MAX]u8);
 
-        const len = std.os.linux.process_vm_readv(self.pid, &.{.{
+        if (from == 0) {
+            return buffer;
+        }
+
+        _ = std.os.linux.process_vm_readv(self.pid, &.{.{
             .base = (&buffer).ptr,
             .len = buffer.len,
         }}, &.{.{
             .base = @ptrFromInt(from),
             .len = 2097152, // value returned by, `getconf ARG_MAX`
         }}, 0);
-
-        @memset(buffer[len..], 0);
 
         return buffer;
     }
@@ -113,12 +107,12 @@ pub const Perm = enum(u5) {
     frwxc = 31,
 
     pub fn update(self: Perm, rhs: Perm) Perm {
-        return @enumFromInt(@intFromEnum(self) | @intFromEnum(rhs));
+        return @fromBackingInt(@intCast(@backingInt(self) | @backingInt(rhs)));
     }
 
     pub fn contains(self: Perm, rhs: Perm) bool {
-        const rhsi = @intFromEnum(rhs);
-        return @intFromEnum(self) & rhsi == rhsi;
+        const rhsi = @backingInt(rhs);
+        return @backingInt(self) & rhsi == rhsi;
     }
 
     pub fn from_amode(int: c_int) ?Perm {
@@ -161,8 +155,8 @@ pub const Perm = enum(u5) {
 
     pub fn format(self: @This(), writer: *std.Io.Writer) !void {
         const e = @typeInfo(@This()).@"enum";
-        inline for (e.fields) |field| {
-            if (field.value == @intFromEnum(self)) return writer.print("{s}", .{field.name});
+        inline for (e.field_values, e.field_names) |field_value, field_name| {
+            if (field_value == @backingInt(self)) return writer.print("{s}", .{field_name});
         }
     }
 };
@@ -469,10 +463,10 @@ pub fn resolveZ(allocator: Allocator, paths: []const []const u8) Allocator.Error
 
     if (result.items.len == 0) {
         if (is_abs) {
-            return allocator.dupeZ(u8, "/\x00");
+            return allocator.dupeSentinel(u8, "/", 0);
         }
         if (negative_count == 0) {
-            return allocator.dupeZ(u8, ".\x00");
+            return allocator.dupeSentinel(u8, ".", 0);
         } else {
             const real_result = try allocator.allocSentinel(u8, 3 * negative_count - 1, 0);
             var count = negative_count - 1;

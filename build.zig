@@ -1,15 +1,18 @@
 const std = @import("std");
+const Translator = @import("translate_c").Translator;
 
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    const module = b.addModule("secure-run", .{
-        .root_source_file = b.path("src/main.zig"),
+    const translate_c = b.dependency("translate_c", .{});
+    const translator: Translator = .init(translate_c, .{
+        .c_source_file = b.path("src/c.h"),
         .target = target,
         .optimize = optimize,
-        .link_libc = true,
+        .link_system_libs = &.{},
     });
+    const module = b.addModule("secure-run", .{ .root_source_file = b.path("src/main.zig"), .target = target, .optimize = optimize, .link_libc = true, .imports = &.{.{ .name = "c", .module = translator.mod }} });
 
     module.linkSystemLibrary("seccomp", .{ .needed = true });
 
@@ -23,9 +26,7 @@ pub fn build(b: *std.Build) void {
     const run_cmd = b.addRunArtifact(exe);
     run_cmd.step.dependOn(b.getInstallStep());
 
-    if (b.args) |args| {
-        run_cmd.addArgs(args);
-    }
+    run_cmd.addPassthruArgs();
 
     const run_step = b.step("run", "Run the app");
     run_step.dependOn(&run_cmd.step);

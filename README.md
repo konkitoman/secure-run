@@ -1,5 +1,7 @@
 # Secure Run
 
+**This is a experimental application!**
+
 Everything that you do using this app is your responsibility.
 
 This app allows you to run a app more securely.
@@ -25,7 +27,7 @@ permissions are laid out in a list.
 
 Every entry has a `perm` and `path` fields, the first is the `perm` and `path` is second.
 
-Falid `perm`
+Field `perm`
 - `none` not permission, secure-run will never save this permission with `-s`
 - `f` the file will be visible to the program
 - `r` the file will have read permissions to the program

@@ -150,12 +150,15 @@ pub fn main(init: std.process.Init) !void {
     if (std.Io.Dir.cwd().openFile(init.io, file_path, .{})) |file| {
         defer file.close(init.io);
         var file_reader = file.reader(init.io, &.{});
-        const data = try file_reader.interface.allocRemaining(alloc, .unlimited);
-        var diag = std.zon.parse.Diagnostics{};
-        defer diag.deinit(alloc);
-        const paths = std.zon.parse.fromSliceAlloc([]const base.DB.Path, alloc, @ptrCast(data), &diag, .{}) catch |err| {
+        const data = try file_reader.interface.allocRemainingAlignedSentinel(alloc, .unlimited, .@"1", 0);
+
+        var arena = std.heap.ArenaAllocator.init(alloc);
+        defer arena.deinit();
+
+        var diag: std.zon.parse.Diagnostics = undefined;
+        const paths = std.zon.parse.fromSlice([]const base.DB.Path, .{ .gpa = arena.allocator(), .arena = arena.allocator(), .source = data, .diagnostics = &diag }) catch |err| {
             std.debug.print("Error {}:\n", .{err});
-            diag.format(stderr) catch {};
+            try diag.fmt(file_path).format(stderr);
             std.process.exit(1);
         };
 
@@ -163,7 +166,6 @@ pub fn main(init: std.process.Init) !void {
             try ctx.db.add(path.@"0", path.@"1");
         }
 
-        std.zon.parse.free(alloc, paths);
         alloc.free(data);
     } else |err| {
         debug.print("Cannot open: {s} {}\n", .{ file_path, err });
@@ -502,9 +504,9 @@ pub fn main(init: std.process.Init) !void {
     syscalls[333] = _allow; // io_pgetevents
     syscalls[334] = _allow; // rseq
     syscalls[424] = _deny; // pidfd_send_signal
-    syscalls[425] = _allow; // io_uring_setup
-    syscalls[426] = _allow; // io_uring_enter
-    syscalls[427] = _allow; // io_uring_register
+    syscalls[425] = _deny; // io_uring_setup
+    syscalls[426] = _deny; // io_uring_enter
+    syscalls[427] = _deny; // io_uring_register
     syscalls[435] = _allow; // clone3
     syscalls[436] = _allow; // close_range
     syscalls[438] = _allow; // pidfd_getfd
@@ -529,7 +531,7 @@ pub fn main(init: std.process.Init) !void {
             break;
         }
 
-        switch ((@intFromEnum(status.signo) >> 8) & 0xff) {
+        switch ((@backingInt(status.signo) >> 8) & 0xff) {
             0 => {
                 debug.print("{}: SUCCESS\n", .{pid});
                 _ = linux.ptrace(C.PTRACE_DETACH, pid, 0, 0, 0);
@@ -539,8 +541,8 @@ pub fn main(init: std.process.Init) !void {
                     _ = ctx.pctxs.remove(pid);
                 }
             },
-            @intFromEnum(c.SIG.TRAP) => {
-                switch (@intFromEnum(status.signo) >> 16) {
+            @backingInt(c.SIG.TRAP) => {
+                switch (@backingInt(status.signo) >> 16) {
                     0 => {
                         debug.print("PTRACE RESET\n", .{});
                     },
@@ -591,12 +593,12 @@ pub fn main(init: std.process.Init) !void {
                         debug.print("{}: EVENT_STOP\n", .{pid});
                     },
                     else => {
-                        debug.print("Unknown event {}\n", .{@intFromEnum(status.signo) >> 16});
-                        sig = @as(i32, @bitCast(@intFromEnum(status.signo))) >> 8;
+                        debug.print("Unknown event {}\n", .{@backingInt(status.signo) >> 16});
+                        sig = @as(i32, @bitCast(@backingInt(status.signo))) >> 8;
                     },
                 }
             },
-            @intFromEnum(c.SIG.STOP) => {
+            @backingInt(c.SIG.STOP) => {
                 debug.print("{}: STOP\n", .{pid});
 
                 if (!ctx.pctxs.contains(pid)) {
@@ -610,11 +612,11 @@ pub fn main(init: std.process.Init) !void {
                     _ = linux.ptrace(C.PTRACE_SETOPTIONS, pid, 0, C.PTRACE_O_EXITKILL | C.PTRACE_O_TRACECLONE | C.PTRACE_O_TRACEFORK | C.PTRACE_O_TRACEVFORK | C.PTRACE_O_TRACESECCOMP, 0);
                     _ = linux.ptrace(C.PTRACE_CONT, pid, 0, 0, 0);
                 } else {
-                    sig = @as(i32, @bitCast(@intFromEnum(status.signo))) >> 8;
+                    sig = @as(i32, @bitCast(@backingInt(status.signo))) >> 8;
                 }
             },
             else => {
-                sig = @as(i32, @bitCast(@intFromEnum(status.signo))) >> 8;
+                sig = @as(i32, @bitCast(@backingInt(status.signo))) >> 8;
             },
         }
 
